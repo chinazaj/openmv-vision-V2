@@ -21,8 +21,8 @@
 | 0 | 全局 | V2 目录骨架 | `VERIFIED` | 基础目录、README、文档入口完成 | V2 已初始化 |
 | 0 | 全局 | 迁移状态管理 | `VERIFIED` | 本表建立并持续维护 | 本文件 |
 | 0 | 全局 | 协议基线 | `ANALYZING` | UART/SPI/HTTP/MJPEG 约束确认 | 迁移前冻结 |
-| 1 | OpenMV | 源码与依赖盘点 | `ANALYZING` | 入口、类、配置、协议依赖全部登记 | 第一迁移对象 |
-| 1 | OpenMV | Video Core | `NOT_STARTED` | JPEG 捕获、帧 ID、CRC、SPI V2 分包行为保持一致 | QVGA 优先 |
+| 1 | OpenMV | 源码与依赖盘点 | `VERIFIED` | 入口、类、配置、协议、视频依赖已登记 | Video Core 抽取无结构性阻塞 |
+| 1 | OpenMV | Video Core | `MIGRATING` | 独立模块、JPEG、帧 ID、CRC、SPI V2 分包行为保持一致 | 已创建 `openmv/core/video/video_core.py`，待静态/硬件验证 |
 | 1 | OpenMV | UART Core | `NOT_STARTED` | JSONL 接收、命令分发、响应行为一致 | 115200 8N1 |
 | 1 | OpenMV | Config Core | `NOT_STARTED` | config.json 权威持久化与校验行为一致 | 不改变配置语义 |
 | 1 | OpenMV | Vision Feature | `NOT_STARTED` | QR/颜色/形状检测行为与旧版一致 | 与视频核心解耦 |
@@ -51,12 +51,14 @@
 
 ## 当前阶段
 
-**阶段 1：OpenMV 迁移准备。**
+**阶段 1：OpenMV Video Core 迁移。**
 
-下一步先对原仓库 OpenMV 代码做完整盘点，再建立 V2 OpenMV 目标目录。迁移时优先保持行为不变，不在同一提交中引入新的协议或算法变化。
+原仓库 OpenMV 源码盘点已完成，确认视频发送逻辑可以独立抽取，不需要修改 Vision、UART、Config 或 Servo 的内部行为。当前先完成 Video Core 的静态检查和硬件验证，再继续其它 OpenMV Core/Feature。
 
 ## 迁移记录
 
 | 日期 | 组件 | 变更 | 状态 |
 |---|---|---|---|
 | 2026-10-22 | V2 | 创建新仓库并初始化迁移文档 | `VERIFIED` |
+| 2026-10-22 | OpenMV | 完成原始 OpenMV 视频链路分析，确认 `SPITransmitter` 可独立库化 | `VERIFIED` |
+| 2026-10-22 | OpenMV Video Core | 创建独立 `VideoTransmitter` 模块，保持 SPI V2 默认参数和协议边界 | `MIGRATING` |
