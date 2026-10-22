@@ -22,7 +22,7 @@
 | 0 | 全局 | 迁移状态管理 | `VERIFIED` | 本表建立并持续维护 | 本文件 |
 | 0 | 全局 | 协议基线 | `ANALYZING` | UART/SPI/HTTP/MJPEG 约束确认 | 迁移前冻结 |
 | 1 | OpenMV | 源码与依赖盘点 | `VERIFIED` | 入口、类、配置、协议、视频依赖已登记 | Video Core 抽取无结构性阻塞 |
-| 1 | OpenMV | Video Core | `MIGRATING` | 独立模块、JPEG、帧 ID、CRC、SPI V2 分包行为保持一致 | 已创建 `openmv/core/video/video_core.py`，待静态/硬件验证 |
+| 1 | OpenMV | Video Core | `MIGRATING` | V1 公共 API、SPI V2 协议行为与测试用例完成；随后执行静态测试和硬件验证 | 已收敛公共 API；新增 `docs/openmv-video-core-api.md` 与 `tests/test_video_core.py`；本环境未能联网克隆仓库，测试尚未实际运行，硬件验证待执行 |
 | 1 | OpenMV | UART Core | `NOT_STARTED` | JSONL 接收、命令分发、响应行为一致 | 115200 8N1 |
 | 1 | OpenMV | Config Core | `NOT_STARTED` | config.json 权威持久化与校验行为一致 | 不改变配置语义 |
 | 1 | OpenMV | Vision Feature | `NOT_STARTED` | QR/颜色/形状检测行为与旧版一致 | 与视频核心解耦 |
@@ -53,7 +53,7 @@
 
 **阶段 1：OpenMV Video Core 迁移。**
 
-原仓库 OpenMV 源码盘点已完成，确认视频发送逻辑可以独立抽取，不需要修改 Vision、UART、Config 或 Servo 的内部行为。当前先完成 Video Core 的静态检查和硬件验证，再继续其它 OpenMV Core/Feature。
+原仓库 OpenMV 源码盘点已完成，确认视频发送逻辑可以独立抽取，不需要修改 Vision、UART、Config 或 Servo 的内部行为。已按 V1 API 合同收敛 Video Core 公共接口，并增加 API 文档与 CPython 硬件桩测试。当前测试用例尚未在仓库工作区实际运行；先在本地执行文档中的 unittest 命令并修复问题，再进行 OpenMV/ESP32 硬件验证。验证完成前不将此模块标记为 `VERIFIED`。
 
 ## 迁移记录
 
@@ -61,4 +61,4 @@
 |---|---|---|---|
 | 2026-10-22 | V2 | 创建新仓库并初始化迁移文档 | `VERIFIED` |
 | 2026-10-22 | OpenMV | 完成原始 OpenMV 视频链路分析，确认 `SPITransmitter` 可独立库化 | `VERIFIED` |
-| 2026-10-22 | OpenMV Video Core | 创建独立 `VideoTransmitter` 模块，保持 SPI V2 默认参数和协议边界 | `MIGRATING` |
+| 2026-10-22 | OpenMV Video Core | 收敛 V1 公共 API；补充 API 合同、README 与主机端硬件桩测试 | `MIGRATING` |
