@@ -20,6 +20,9 @@
 #include <Preferences.h>
 
 #include "../../core/video/spi_video_receiver.h"
+// Arduino IDE does not compile this external Core .cpp automatically.
+// Include the implementation once here, matching the previously working sketch build.
+#include "../../core/video/spi_video_receiver.cpp"
 
 namespace {
 
