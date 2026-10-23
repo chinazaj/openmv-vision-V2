@@ -106,6 +106,7 @@ void setup() {
 
 void loop() {
     server.handleClient();
-    MDNS.update();
+    // Arduino-ESP32 的 MDNSResponder 不提供 update()；mDNS 在后台任务中处理。
     delay(2);
+}
 }
