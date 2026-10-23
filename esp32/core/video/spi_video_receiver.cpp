@@ -294,14 +294,58 @@ void SpiVideoReceiver::receiveTask() {
             continue;
         }
 
-        PacketHeader header{};
-        if (!parseHeader(_dmaRxBuffer, header)) {
+        const size_t receivedBytesOnWire = transaction.trans_len / 8;
+        if (receivedBytesOnWire < SPI_HEADER_SIZE) {
             ++_stats.bad_headers;
+            ++_stats.bad_frames;
             if (rxBufferIndex >= 0) {
                 _bufferState[rxBufferIndex] = 0;
                 rxBufferIndex = -1;
             }
+            continue;
+        }
+
+        PacketHeader header{};
+        if (!parseHeader(_dmaRxBuffer, header)) {
+            ++_stats.bad_headers;
             ++_stats.bad_frames;
+
+            // Log the first complete invalid header so wire-level protocol
+            // mismatches can be diagnosed without flooding the serial port.
+            static bool firstBadHeaderLogged = false;
+            if (!firstBadHeaderLogged) {
+                firstBadHeaderLogged = true;
+                Serial.println("[SPI DIAG] First invalid header bytes:");
+                for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) {
+                    Serial.printf("%02X%s", _dmaRxBuffer[i],
+                                  (i + 1 == SPI_HEADER_SIZE) ? "\n" : " ");
+                }
+                Serial.printf(
+                    "[SPI DIAG] bytes=%u magic=0x%04X version=%u type=%u "
+                    "frame=%u packet=%u/%u payload=%u frame_size=%lu crc=0x%04X\n",
+                    static_cast<unsigned>(receivedBytesOnWire),
+                    header.magic, header.version, header.type, header.frame_id,
+                    header.packet_idx, header.total_packets, header.payload_len,
+                    static_cast<unsigned long>(header.frame_size), header.frame_crc16);
+            }
+
+            if (rxBufferIndex >= 0) {
+                _bufferState[rxBufferIndex] = 0;
+                rxBufferIndex = -1;
+            }
+            continue;
+        }
+
+        // trans_len is the number of bits actually clocked by the master.
+        // Never copy payload bytes that were not received in this transaction.
+        if (header.payload_len == 0 ||
+            SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
+            ++_stats.bad_headers;
+            ++_stats.bad_frames;
+            if (rxBufferIndex >= 0) {
+                _bufferState[rxBufferIndex] = 0;
+                rxBufferIndex = -1;
+            }
             continue;
         }
 
@@ -368,8 +412,13 @@ void SpiVideoReceiver::receiveTask() {
         ++nextPacket;
 
         if (nextPacket == expectedPackets) {
+            const uint8_t* jpeg = _frameBuffers[rxBufferIndex];
             if (receivedBytes != expectedFrameSize ||
-                crc16Ccitt(_frameBuffers[rxBufferIndex], expectedFrameSize) != expectedFrameCrc) {
+                expectedFrameSize < 4 ||
+                jpeg[0] != 0xFF || jpeg[1] != 0xD8 ||
+                jpeg[expectedFrameSize - 2] != 0xFF ||
+                jpeg[expectedFrameSize - 1] != 0xD9 ||
+                crc16Ccitt(jpeg, expectedFrameSize) != expectedFrameCrc) {
                 ++_stats.bad_frames;
                 _bufferState[rxBufferIndex] = 0;
                 rxBufferIndex = -1;
