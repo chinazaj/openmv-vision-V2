@@ -78,6 +78,7 @@ private:
     SemaphoreHandle_t _mutex = nullptr;
     TaskHandle_t _task = nullptr;
     volatile bool _running = false;
+    bool _spiInitialized = false;
 
     Stats _stats;
     uint16_t _lastFrameId = 0;
