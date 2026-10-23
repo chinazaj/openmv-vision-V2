@@ -107,7 +107,7 @@ void startApProvisioning() {
         Serial.println("[WiFi] softAPConfig failed");
     }
 
-    const bool started = WiFi.softAP(AP_SSID);
+    const bool started = WiFi.softAP(AP_SSID, "12345678");
     Serial.printf("[WiFi] AP start: %s\n", started ? "OK" : "FAILED");
     Serial.print("[WiFi] AP IP: ");
     Serial.println(WiFi.softAPIP());
@@ -173,7 +173,7 @@ void handleSaveWifi() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/html; charset=utf-8", html);
     server.client().flush();
-    delay(1500);
+    delay(2000);
     ESP.restart();
 }
 
@@ -410,6 +410,9 @@ void setupWifi() {
             ++retries;
         }
         Serial.println();
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.printf("[WiFi] STA connect failed, status=%d; falling back to AP provisioning\\n", static_cast<int>(WiFi.status()));
+        }
     }
 
     if (WiFi.status() != WL_CONNECTED) {
