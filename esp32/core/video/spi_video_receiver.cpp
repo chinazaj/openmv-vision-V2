@@ -425,8 +425,13 @@ void SpiVideoReceiver::receiveTask() {
                 continue;
             }
 
-            if (_haveLastFrameId && static_cast<uint16_t>(rxFrameId - _lastFrameId) != 1) {
-                ++_stats.frame_id_gaps;
+            if (_haveLastFrameId) {
+                const uint16_t frameIdDelta = static_cast<uint16_t>(rxFrameId - _lastFrameId);
+                if (frameIdDelta > 1) {
+                    // Preserve the original firmware's metric: count missing
+                    // frame IDs, not merely the number of gap events.
+                    _stats.frame_id_gaps += static_cast<uint32_t>(frameIdDelta - 1);
+                }
             }
             _lastFrameId = rxFrameId;
             _haveLastFrameId = true;
