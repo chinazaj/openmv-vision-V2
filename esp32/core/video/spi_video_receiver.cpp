@@ -423,7 +423,7 @@ void SpiVideoReceiver::receiveTask() {
             continue;
         }
 
-        memcpy(_frameBuffers[rxBufferIndex], _dmaRxBuffer + SPI_HEADER_SIZE, header.payload_len);
+        memcpy(_frameBuffers[rxBufferIndex] + offset, _dmaRxBuffer + SPI_HEADER_SIZE, header.payload_len);
         receivedBytes += header.payload_len;
         ++nextPacket;
 
