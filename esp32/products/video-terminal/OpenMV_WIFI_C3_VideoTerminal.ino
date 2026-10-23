@@ -84,7 +84,7 @@ void handleFrame() {
         const uint32_t now = millis();
         if (now - lastNoFrameLogMs >= 5000) {
             const auto stats = videoReceiver.getStats();
-            Serial.printf("[VIDEO HTTP] no frame available; rx_ok=%lu bad=%lu headers=%lu dropped=%lu timeout=%lu\\n",
+            Serial.printf("[VIDEO HTTP] no frame available; rx_ok=%lu bad=%lu headers=%lu dropped=%lu timeout=%lu\n",
                           static_cast<unsigned long>(stats.ok_frames),
                           static_cast<unsigned long>(stats.bad_frames),
                           static_cast<unsigned long>(stats.bad_headers),
@@ -100,12 +100,12 @@ void handleFrame() {
     server.send(200, "image/jpeg", "");
     const size_t written = server.client().write(frame.data, frame.size);
     if (written != frame.size) {
-        Serial.printf("[VIDEO HTTP] short JPEG write: %u/%u bytes\\n",
+        Serial.printf("[VIDEO HTTP] short JPEG write: %u/%u bytes\n",
                       static_cast<unsigned>(written), static_cast<unsigned>(frame.size));
     }
     const uint32_t now = millis();
     if (now - lastFrameLogMs >= 5000) {
-        Serial.printf("[VIDEO HTTP] JPEG served: frame_id=%u size=%u bytes\\n",
+        Serial.printf("[VIDEO HTTP] JPEG served: frame_id=%u size=%u bytes\n",
                       frame.frame_id, static_cast<unsigned>(frame.size));
         lastFrameLogMs = now;
     }
