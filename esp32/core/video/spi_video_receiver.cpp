@@ -294,7 +294,6 @@ void SpiVideoReceiver::receiveTask() {
 
         const size_t receivedBytesOnWire = transaction.trans_len / 8;
         if (receivedBytesOnWire < SPI_HEADER_SIZE) {
-            ++_stats.bad_headers;
             ++_stats.bad_frames;
             if (rxBufferIndex >= 0) {
                 _bufferState[rxBufferIndex] = 0;
@@ -356,7 +355,6 @@ void SpiVideoReceiver::receiveTask() {
         // trans_len is the number of bits actually clocked by the master.
         // Never copy payload bytes that were not received in this transaction.
         if (SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
-            ++_stats.bad_headers;
             ++_stats.bad_frames;
             if (rxBufferIndex >= 0) {
                 _bufferState[rxBufferIndex] = 0;
@@ -373,7 +371,6 @@ void SpiVideoReceiver::receiveTask() {
             (header.packet_idx + 1 == header.total_packets &&
              header.payload_len != header.frame_size -
                  static_cast<uint32_t>(header.packet_idx) * SPI_PAYLOAD_SIZE)) {
-            ++_stats.bad_headers;
             if (rxBufferIndex >= 0) {
                 _bufferState[rxBufferIndex] = 0;
                 rxBufferIndex = -1;
