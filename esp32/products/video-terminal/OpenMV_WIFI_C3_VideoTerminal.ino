@@ -202,7 +202,7 @@ void handleStatus() {
 
 void handleFrame() {
     SpiVideoReceiver::FrameView frame;
-    if (!videoActive || !videoReceiver.acquireLatestFrame(frame)) {
+    if (!videoReceiver.acquireLatestFrame(frame)) {
         server.send(503, "text/plain; charset=utf-8", "No video frame received yet");
         return;
     }
