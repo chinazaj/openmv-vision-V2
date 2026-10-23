@@ -18,8 +18,12 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <esp_http_server.h>
 
+#include "html_common.h"
 #include "html_root.h"
+#include "html_wifi.h"
+#include "html_video.h"
 
 #include "../../core/video/spi_video_receiver.h"
 // Arduino IDE does not compile this external Core .cpp automatically.
@@ -43,6 +47,7 @@ const IPAddress AP_SUBNET(255, 255, 255, 0);
 
 WebServer server(80);
 DNSServer dnsServer;
+httpd_handle_t streamHttpServer = nullptr;
 Preferences prefs;
 HardwareSerial OpenMVUart(1);
 SpiVideoReceiver videoReceiver;
@@ -118,76 +123,62 @@ void redirectToPortal() {
 }
 
 void handleRoot() {
-    const IPAddress ip = WiFi.getMode() == WIFI_AP ? WiFi.softAPIP() : WiFi.localIP();
-    String html = HTML_ROOT_PAGE;
-    html.replace("{{IP_ADDRESS}}", ip.toString());
-    server.sendHeader("Cache-Control", "no-store");
+    const bool connected = WiFi.status() == WL_CONNECTED;
+    const String networkMode = connected ? "STA 客户端" : "AP 热点";
+    const String ipAddress = connected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+    const String videoState = videoActive ? "传输中" : "已停止";
+
+    String html = String(HTML_HEAD) + HTML_ROOT_RELEASE_BODY;
+    html.replace("{{NETWORK_MODE}}", networkMode);
+    html.replace("{{IP_ADDRESS}}", ipAddress);
+    html.replace("{{VIDEO_STATE}}", videoState);
+    html += "</body></html>";
+
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     server.send(200, "text/html; charset=utf-8", html);
 }
 
 void handleVideoPage() {
-    String html;
-    html.reserve(1800);
-    html += "<!doctype html><html lang='en'><head><meta charset='utf-8'>";
-    html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>OpenMV Video</title>";
-    html += "<style>body{margin:0;background:#111;color:#eee;font-family:Arial,sans-serif;text-align:center}";
-    html += "h2{font-size:18px;font-weight:500}img{display:block;max-width:100%;height:auto;margin:0 auto}</style></head><body>";
-    html += "<h2>OpenMV Video</h2><img id='frame' alt='Waiting for video frame'>";
-    html += "<script>const img=document.getElementById('frame');let previous='';";
-    html += "async function next(){try{const r=await fetch('/frame.jpg?t='+Date.now(),{cache:'no-store'});";
-    html += "if(!r.ok)throw Error('No frame');const blob=await r.blob();const url=URL.createObjectURL(blob);";
-    html += "const probe=new Image();probe.onload=()=>{img.src=url;if(previous)URL.revokeObjectURL(previous);previous=url;setTimeout(next,60)};";
-    html += "probe.onerror=()=>{URL.revokeObjectURL(url);setTimeout(next,250)};probe.src=url;";
-    html += "}catch(e){setTimeout(next,250)}}next();</script></body></html>";
-    server.sendHeader("Cache-Control", "no-store");
-    server.send(200, "text/html; charset=utf-8", html);
+    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    server.send(200, "text/html; charset=utf-8", HTML_VIDEO_PAGE);
 }
 
 void handleWifiPage() {
-    String html;
-    html += "<!doctype html><html lang='en'><head><meta charset='utf-8'>";
-    html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>OpenMV Wi-Fi</title></head><body><h2>Wi-Fi Configuration</h2>";
-    html += "<form method='POST' action='/save_wifi'>";
-    html += "SSID: <input name='ssid' maxlength='32' required><br>";
-    html += "Password: <input name='pass' type='password' maxlength='63'><br>";
-    html += "<button type='submit'>Save and reboot</button></form>";
-    html += "<form method='POST' action='/clear_wifi'><button type='submit'>Clear Wi-Fi</button></form>";
-    html += "<p><a href='/'>Back</a></p></body></html>";
+    String html = String(HTML_HEAD);
+    html += HTML_WIFI_BODY;
+    html += "</body></html>";
     server.send(200, "text/html; charset=utf-8", html);
 }
 
 void handleSaveWifi() {
-    String ssid = server.arg("ssid");
-    String password = server.arg("pass");
-    ssid.trim();
-
-    if (ssid.isEmpty() || ssid.length() > 32 || password.length() > 63) {
-        server.send(400, "text/plain; charset=utf-8", "Invalid SSID or password length");
+    if (!server.hasArg("ssid") || !server.hasArg("pass")) {
+        server.send(400, "text/plain; charset=utf-8", "Bad Request");
         return;
     }
 
-    const size_t ssidWritten = prefs.putString("ssid", ssid);
-    const size_t passWritten = prefs.putString("pass", password);
-    const bool verified = ssidWritten == ssid.length() &&
-                          passWritten == password.length() &&
-                          prefs.getString("ssid", "") == ssid &&
-                          prefs.getString("pass", "") == password;
-    if (!verified) {
-        Serial.printf("[WiFi] NVS save verification failed (ssid=%u pass=%u)\\n",
-                      static_cast<unsigned>(ssidWritten),
-                      static_cast<unsigned>(passWritten));
-        server.send(500, "text/plain; charset=utf-8", "Wi-Fi configuration was not saved; please retry");
+    // Keep the original form contract and NVS keys used by the stable firmware.
+    const String ssid = server.arg("ssid");
+    const String password = server.arg("pass");
+    prefs.putString("ssid", ssid);
+    prefs.putString("pass", password);
+
+    const String savedSsid = prefs.getString("ssid", "");
+    const String savedPassword = prefs.getString("pass", "");
+    if (savedSsid != ssid || savedPassword != password) {
+        Serial.println("[WiFi] ERROR: NVS read-back did not match submitted credentials");
+        server.send(500, "text/plain; charset=utf-8", "Wi-Fi settings could not be saved. Please retry.");
         return;
     }
 
-    Serial.printf("[WiFi] NVS verified; saved SSID '%s' (%u chars)\\n",
-                  ssid.c_str(), static_cast<unsigned>(ssid.length()));
+    Serial.printf("[WiFi] Credentials persisted and verified; SSID length=%u\n",
+                  static_cast<unsigned>(ssid.length()));
+
+    String html = String(HTML_HEAD);
+    html += "<div class='card'><h3>Wi-Fi 信息已保存！设备正在重启...</h3></div></body></html>";
     server.sendHeader("Connection", "close");
-    server.send(200, "text/plain; charset=utf-8", "Wi-Fi saved and verified. Rebooting...");
+    server.send(200, "text/html; charset=utf-8", html);
     server.client().flush();
-    delay(1000);
+    delay(1500);
     ESP.restart();
 }
 
@@ -195,9 +186,89 @@ void handleClearWifi() {
     prefs.remove("ssid");
     prefs.remove("pass");
     WiFi.disconnect(true, true);
-    server.send(200, "text/plain; charset=utf-8", "Wi-Fi cleared. Rebooting...");
-    delay(500);
+
+    String html = String(HTML_HEAD);
+    html += "<div class='card'><h3>Wi-Fi 配置已清除，设备正在重启...</h3></div></body></html>";
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/html; charset=utf-8", html);
+    server.client().flush();
+    delay(1500);
     ESP.restart();
+}
+
+esp_err_t streamHandler(httpd_req_t* request) {
+    httpd_resp_set_type(request, "multipart/x-mixed-replace; boundary=frame");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(request, "Pragma", "no-cache");
+    httpd_resp_set_hdr(request, "Connection", "close");
+
+    char partHeader[128];
+    uint32_t lastFrameAt = millis();
+
+    while (true) {
+        SpiVideoReceiver::FrameView frame;
+        if (videoReceiver.acquireLatestFrame(frame) && frame.data != nullptr && frame.size > 0) {
+            snprintf(partHeader, sizeof(partHeader),
+                     "--frame\\r\\nContent-Type: image/jpeg\\r\\nContent-Length: %u\\r\\n\\r\\n",
+                     static_cast<unsigned>(frame.size));
+
+            esp_err_t result = httpd_resp_send_chunk(request, partHeader, strlen(partHeader));
+            if (result == ESP_OK) {
+                result = httpd_resp_send_chunk(request,
+                                               reinterpret_cast<const char*>(frame.data),
+                                               frame.size);
+            }
+            if (result == ESP_OK) {
+                result = httpd_resp_send_chunk(request, "\\r\\n", 2);
+            }
+            videoReceiver.releaseFrame(frame);
+
+            if (result != ESP_OK) {
+                Serial.println("[STREAM] client disconnected or send failed");
+                break;
+            }
+            lastFrameAt = millis();
+            continue;
+        }
+
+        if (millis() - lastFrameAt > 5000) {
+            Serial.println("[STREAM] no new frame for 5 seconds; closing stream");
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    httpd_resp_send_chunk(request, nullptr, 0);
+    return ESP_OK;
+}
+
+bool startHttpStreamServer() {
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 81;
+    config.ctrl_port = 32769;
+    config.send_wait_timeout = 1;
+    config.lru_purge_enable = true;
+
+    httpd_uri_t streamUri{};
+    streamUri.uri = "/stream";
+    streamUri.method = HTTP_GET;
+    streamUri.handler = streamHandler;
+    streamUri.user_ctx = nullptr;
+
+    if (httpd_start(&streamHttpServer, &config) != ESP_OK) {
+        Serial.println("[STREAM] failed to start HTTP server on port 81");
+        streamHttpServer = nullptr;
+        return false;
+    }
+    if (httpd_register_uri_handler(streamHttpServer, &streamUri) != ESP_OK) {
+        Serial.println("[STREAM] failed to register /stream");
+        httpd_stop(streamHttpServer);
+        streamHttpServer = nullptr;
+        return false;
+    }
+
+    Serial.println("[STREAM] MJPEG stream ready at http://<device-ip>:81/stream");
+    return true;
 }
 
 void handleStatus() {
@@ -424,10 +495,12 @@ void setup() {
     }
 
     setupWebServer();
+    startHttpStreamServer();
 
     Serial.println("[VIDEO RX] SPI2 slave ready: SCK=4 MISO=5 MOSI=6 CS=7");
     Serial.println("[VIDEO RX] migrated from validated OpenMV_WIFI_C3_V0_1 receive path");
     Serial.println("[HTTP] open http://192.168.4.1/ when using AP mode");
+    Serial.println("[HTTP] video stream is served on port 81 at /stream");
 }
 
 void loop() {
