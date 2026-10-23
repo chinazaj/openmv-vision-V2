@@ -73,6 +73,7 @@ void handleStream() {
     }
     videoClientActive = false;
 }
+} // namespace
 
 void setup() {
     Serial.begin(115200);
@@ -108,5 +109,4 @@ void loop() {
     server.handleClient();
     // Arduino-ESP32 的 MDNSResponder 不提供 update()；mDNS 在后台任务中处理。
     delay(2);
-}
 }
