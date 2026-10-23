@@ -3,6 +3,9 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 
 class SpiVideoReceiver {
 public:
@@ -37,8 +40,6 @@ public:
     bool begin();
     void end();
 
-    // Acquire the newest completed JPEG frame. The returned buffer must be
-    // released with releaseFrame() after the caller finishes using it.
     bool acquireLatestFrame(FrameView& frame);
     void releaseFrame(FrameView& frame);
 
@@ -63,11 +64,9 @@ private:
 
     int findReceiveBuffer();
     void publishFrame(int index, size_t size, uint16_t frameId);
-    void dropReceiveFrame();
     void receiveTask();
     static void receiveTaskEntry(void* arg);
 
-    void* _spi = nullptr;
     uint8_t* _dmaRxBuffer = nullptr;
     uint8_t* _frameBuffers[2] = {nullptr, nullptr};
 
@@ -76,8 +75,8 @@ private:
     volatile uint16_t _bufferFrameId[2] = {0, 0};
     volatile int _readyBuffer = -1;
 
-    void* _mux = nullptr;
-    void* _task = nullptr;
+    SemaphoreHandle_t _mutex = nullptr;
+    TaskHandle_t _task = nullptr;
     volatile bool _running = false;
 
     Stats _stats;
