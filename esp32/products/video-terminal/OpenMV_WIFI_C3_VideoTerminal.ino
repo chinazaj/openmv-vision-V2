@@ -93,9 +93,14 @@ void setVideoState(bool enabled) {
 
 void startMdns() {
     if (MDNS.begin(MDNS_NAME)) {
-        Serial.printf("[mDNS] http://%s.local/\n", MDNS_NAME);
+        // Advertise both control and MJPEG endpoints for mDNS-aware clients.
+        MDNS.addService("http", "tcp", 80);
+        MDNS.addService("http", "tcp", 81);
+        Serial.printf("[mDNS] hostname: %s.local\\n", MDNS_NAME);
+        Serial.printf("[mDNS] control: http://%s.local/\\n", MDNS_NAME);
+        Serial.printf("[mDNS] video:   http://%s.local:81/stream\\n", MDNS_NAME);
     } else {
-        Serial.println("[mDNS] start failed");
+        Serial.println("[mDNS] start failed; use the device IP address");
     }
 }
 
@@ -204,7 +209,7 @@ esp_err_t streamHandler(httpd_req_t* request) {
         SpiVideoReceiver::FrameView frame;
         if (videoReceiver.acquireLatestFrame(frame) && frame.data != nullptr && frame.size > 0) {
             snprintf(partHeader, sizeof(partHeader),
-                     "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                     "--frame\\r\\nContent-Type: image/jpeg\\r\\nContent-Length: %u\\r\\n\\r\\n",
                      static_cast<unsigned>(frame.size));
 
             esp_err_t result = httpd_resp_send_chunk(request, partHeader, strlen(partHeader));
@@ -214,34 +219,34 @@ esp_err_t streamHandler(httpd_req_t* request) {
                                                frame.size);
             }
             if (result == ESP_OK) {
-                result = httpd_resp_send_chunk(request, "\r\n", 2);
+                result = httpd_resp_send_chunk(request, "\\r\\n", 2);
             }
             videoReceiver.releaseFrame(frame);
 
             if (result != ESP_OK) {
-                Serial.println("[STREAM] client disconnected or send failed");
-                break;
+                Serial.printf("[STREAM] send failed (%d); closing client session\\n",
+                              static_cast<int>(result));
+                // Do not write again after the socket has failed. Return ESP_FAIL
+                // so esp_http_server releases this long-running session.
+                return ESP_FAIL;
             }
             lastFrameAt = millis();
             continue;
         }
 
         if (millis() - lastFrameAt > 5000) {
-            Serial.println("[STREAM] no new frame for 5 seconds; closing stream");
-            break;
+            Serial.println("[STREAM] no new frame for 5 seconds; closing client session");
+            return ESP_FAIL;
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
-
-    httpd_resp_send_chunk(request, nullptr, 0);
-    return ESP_OK;
 }
-
 bool startHttpStreamServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 81;
     config.ctrl_port = 32769;
-    config.send_wait_timeout = 1;
+    // JPEG frames may take longer than one second on a busy Wi-Fi link.
+    config.send_wait_timeout = 5;
     config.lru_purge_enable = true;
 
     httpd_uri_t streamUri{};
