@@ -58,7 +58,7 @@ void handleRoot() {
         "const state=document.getElementById('videoState');"
         "function nextFrame(){img.src='/frame.jpg?t='+Date.now()}"
         "img.onload=()=>{state.textContent='Frame received';setTimeout(nextFrame,100)};"
-        "img.onerror=()=>{state.textContent='Waiting for frame from OpenMV...';setTimeout(nextFrame,1000)};"
+        "img.onerror=()=>{state.textContent='No JPEG frame available (check RX counters below)';setTimeout(nextFrame,1000)};"
         "nextFrame();"
         "setInterval(async()=>{try{document.getElementById('status').textContent=JSON.stringify(await (await fetch('/api/status',{cache:'no-store'})).json(),null,2)}catch(e){}},1000);"
         "</script></body></html>";
@@ -77,15 +77,38 @@ void handleStatus() {
 }
 
 void handleFrame() {
+    static uint32_t lastNoFrameLogMs = 0;
+    static uint32_t lastFrameLogMs = 0;
     SpiVideoReceiver::FrameView frame;
     if (!videoReceiver.acquireLatestFrame(frame)) {
+        const uint32_t now = millis();
+        if (now - lastNoFrameLogMs >= 5000) {
+            const auto stats = videoReceiver.getStats();
+            Serial.printf("[VIDEO HTTP] no frame available; rx_ok=%lu bad=%lu headers=%lu dropped=%lu timeout=%lu\\n",
+                          static_cast<unsigned long>(stats.ok_frames),
+                          static_cast<unsigned long>(stats.bad_frames),
+                          static_cast<unsigned long>(stats.bad_headers),
+                          static_cast<unsigned long>(stats.dropped_frames),
+                          static_cast<unsigned long>(stats.timeouts));
+            lastNoFrameLogMs = now;
+        }
         server.send(503, "text/plain; charset=utf-8", "No video frame received yet");
         return;
     }
 
     server.setContentLength(frame.size);
     server.send(200, "image/jpeg", "");
-    server.sendContent(reinterpret_cast<const char*>(frame.data), frame.size);
+    const size_t written = server.client().write(frame.data, frame.size);
+    if (written != frame.size) {
+        Serial.printf("[VIDEO HTTP] short JPEG write: %u/%u bytes\\n",
+                      static_cast<unsigned>(written), static_cast<unsigned>(frame.size));
+    }
+    const uint32_t now = millis();
+    if (now - lastFrameLogMs >= 5000) {
+        Serial.printf("[VIDEO HTTP] JPEG served: frame_id=%u size=%u bytes\\n",
+                      frame.frame_id, static_cast<unsigned>(frame.size));
+        lastFrameLogMs = now;
+    }
     videoReceiver.releaseFrame(frame);
 }
 
