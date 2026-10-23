@@ -99,7 +99,7 @@ class VideoTransmitter:
         pad_len = (4 - ((len(header) + payload_len) & 0x03)) & 0x03
         packet = header + payload
         if pad_len:
-            packet += b"\\x00" * pad_len
+            packet += b"\x00" * pad_len
 
         self.cs.low()
         try:
