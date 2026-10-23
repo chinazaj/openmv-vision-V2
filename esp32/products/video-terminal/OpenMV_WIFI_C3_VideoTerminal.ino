@@ -138,11 +138,6 @@ void handleRoot() {
     server.send(200, "text/html; charset=utf-8", html);
 }
 
-void handleVideoPage() {
-    server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    server.send(200, "text/html; charset=utf-8", HTML_VIDEO_PAGE);
-}
-
 void handleWifiPage() {
     String html = String(HTML_HEAD);
     html += HTML_WIFI_BODY;
@@ -209,7 +204,7 @@ esp_err_t streamHandler(httpd_req_t* request) {
         SpiVideoReceiver::FrameView frame;
         if (videoReceiver.acquireLatestFrame(frame) && frame.data != nullptr && frame.size > 0) {
             snprintf(partHeader, sizeof(partHeader),
-                     "--frame\\r\\nContent-Type: image/jpeg\\r\\nContent-Length: %u\\r\\n\\r\\n",
+                     "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
                      static_cast<unsigned>(frame.size));
 
             esp_err_t result = httpd_resp_send_chunk(request, partHeader, strlen(partHeader));
@@ -219,7 +214,7 @@ esp_err_t streamHandler(httpd_req_t* request) {
                                                frame.size);
             }
             if (result == ESP_OK) {
-                result = httpd_resp_send_chunk(request, "\\r\\n", 2);
+                result = httpd_resp_send_chunk(request, "\r\n", 2);
             }
             videoReceiver.releaseFrame(frame);
 
@@ -318,7 +313,6 @@ void handleNotFound() {
 void setupWebServer() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/wifi", HTTP_GET, handleWifiPage);
-    server.on("/video", HTTP_GET, handleVideoPage);
     server.on("/api/status", HTTP_GET, handleStatus);
     server.on("/frame.jpg", HTTP_GET, handleFrame);
 
