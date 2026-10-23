@@ -338,16 +338,16 @@ void setupWebServer() {
     server.on("/save_wifi", HTTP_POST, handleSaveWifi);
     server.on("/clear_wifi", HTTP_POST, handleClearWifi);
 
-    server.on("/generate_204", HTTP_ANY, redirectToPortal);
-    server.on("/gen_204", HTTP_ANY, redirectToPortal);
-    server.on("/hotspot-detect.html", HTTP_ANY, redirectToPortal);
-    server.on("/library/test/success.html", HTTP_ANY, redirectToPortal);
-    server.on("/success.txt", HTTP_ANY, redirectToPortal);
-    server.on("/connecttest.txt", HTTP_ANY, redirectToPortal);
-    server.on("/ncsi.txt", HTTP_ANY, redirectToPortal);
-    server.on("/canonical.html", HTTP_ANY, redirectToPortal);
-    server.on("/redirect", HTTP_ANY, redirectToPortal);
-    server.on("/fwlink", HTTP_ANY, redirectToPortal);
+    server.on("/generate_204", HTTP_GET, redirectToPortal);
+    server.on("/gen_204", HTTP_GET, redirectToPortal);
+    server.on("/hotspot-detect.html", HTTP_GET, redirectToPortal);
+    server.on("/library/test/success.html", HTTP_GET, redirectToPortal);
+    server.on("/success.txt", HTTP_GET, redirectToPortal);
+    server.on("/connecttest.txt", HTTP_GET, redirectToPortal);
+    server.on("/ncsi.txt", HTTP_GET, redirectToPortal);
+    server.on("/canonical.html", HTTP_GET, redirectToPortal);
+    server.on("/redirect", HTTP_GET, redirectToPortal);
+    server.on("/fwlink", HTTP_GET, redirectToPortal);
     server.onNotFound(handleNotFound);
     server.begin();
 
