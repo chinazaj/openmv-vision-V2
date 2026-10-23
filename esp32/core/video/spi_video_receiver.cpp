@@ -156,14 +156,12 @@ bool SpiVideoReceiver::parseHeader(const uint8_t* packet, PacketHeader& header) 
     header.frame_crc16 = static_cast<uint16_t>(packet[16]) |
                          static_cast<uint16_t>(packet[17]) << 8;
 
+    // Match the original firmware's header-error counter semantics:
+    // this function validates the fixed signature/version/type only.
+    // Length and packet-field validation is handled by receiveTask().
     return header.magic == SPI_MAGIC &&
            header.version == SPI_VERSION &&
-           header.type == SPI_TYPE_FRAME &&
-           header.total_packets > 0 &&
-           header.total_packets <= (MAX_FRAME_SIZE + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE &&
-           header.payload_len <= SPI_PAYLOAD_SIZE &&
-           header.frame_size > 0 &&
-           header.frame_size <= MAX_FRAME_SIZE;
+           header.type == SPI_TYPE_FRAME;
 }
 
 int SpiVideoReceiver::findReceiveBuffer() {
@@ -336,10 +334,28 @@ void SpiVideoReceiver::receiveTask() {
             continue;
         }
 
+        const size_t maxPacketCount =
+            (MAX_FRAME_SIZE + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
+        if (header.total_packets == 0 ||
+            header.total_packets > maxPacketCount ||
+            header.payload_len == 0 ||
+            header.payload_len > SPI_PAYLOAD_SIZE ||
+            header.frame_size < 4 ||
+            header.frame_size > MAX_FRAME_SIZE) {
+            ++_stats.bad_frames;
+            if (header.frame_size < 4 || header.frame_size > MAX_FRAME_SIZE) {
+                ++_stats.oversize;
+            }
+            if (rxBufferIndex >= 0) {
+                _bufferState[rxBufferIndex] = 0;
+                rxBufferIndex = -1;
+            }
+            continue;
+        }
+
         // trans_len is the number of bits actually clocked by the master.
         // Never copy payload bytes that were not received in this transaction.
-        if (header.payload_len == 0 ||
-            SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
+        if (SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
             ++_stats.bad_headers;
             ++_stats.bad_frames;
             if (rxBufferIndex >= 0) {
