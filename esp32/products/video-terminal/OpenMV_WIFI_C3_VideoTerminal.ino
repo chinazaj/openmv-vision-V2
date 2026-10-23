@@ -19,6 +19,8 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 
+#include "html_root.h"
+
 #include "../../core/video/spi_video_receiver.h"
 // Arduino IDE does not compile this external Core .cpp automatically.
 // Include the implementation once here, matching the previously working sketch build.
@@ -116,44 +118,40 @@ void redirectToPortal() {
 }
 
 void handleRoot() {
-    const auto stats = videoReceiver.getStats();
-    const char* state = videoActive ? "ON" : "OFF";
+    const IPAddress ip = WiFi.getMode() == WIFI_AP ? WiFi.softAPIP() : WiFi.localIP();
+    String html = HTML_ROOT_PAGE;
+    html.replace("{{IP_ADDRESS}}", ip.toString());
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "text/html; charset=utf-8", html);
+}
 
+void handleVideoPage() {
     String html;
-    html.reserve(6000);
-    html += "<!doctype html><html><head><meta charset='utf-8'>";
+    html.reserve(1800);
+    html += "<!doctype html><html lang='en'><head><meta charset='utf-8'>";
     html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<meta http-equiv='Cache-Control' content='no-cache'>";
-    html += "<title>OpenMV Video Terminal</title></head><body>";
-    html += "<h2>OpenMV Video Terminal</h2>";
-    html += "<p>Video: <b>";
-    html += state;
-    html += "</b></p>";
-    html += "<p><a href='/start'>START</a> &nbsp; <a href='/stop'>STOP</a> &nbsp; <a href='/toggle_led'>LED</a></p>";
-    html += "<p><a href='/wifi'>Wi-Fi configuration</a></p>";
-    html += "<img id='video' style='max-width:100%;height:auto;background:#111'>";
-    html += "<pre id='status'>loading...</pre>";
-    html += "<script>";
-    html += "const img=document.getElementById('video');let last=null;";
-    html += "async function frame(){try{";
-    html += "const r=await fetch('/frame.jpg?t='+Date.now(),{cache:'no-store'});";
-    html += "if(!r.ok)throw 0;const b=await r.blob();const u=URL.createObjectURL(b);";
-    html += "const p=new Image();p.onload=()=>{img.src=u;if(last)URL.revokeObjectURL(last);last=u;setTimeout(frame,80)};";
-    html += "p.onerror=()=>{URL.revokeObjectURL(u);setTimeout(frame,250)};p.src=u;";
-    html += "}catch(e){setTimeout(frame,250)}}frame();";
-    html += "setInterval(async()=>{try{document.getElementById('status').textContent=JSON.stringify(await (await fetch('/api/status',{cache:'no-store'})).json(),null,2)}catch(e){}},1000);";
-    html += "</script></body></html>";
-
+    html += "<title>OpenMV Video</title>";
+    html += "<style>body{margin:0;background:#111;color:#eee;font-family:Arial,sans-serif;text-align:center}";
+    html += "h2{font-size:18px;font-weight:500}img{display:block;max-width:100%;height:auto;margin:0 auto}</style></head><body>";
+    html += "<h2>OpenMV Video</h2><img id='frame' alt='Waiting for video frame'>";
+    html += "<script>const img=document.getElementById('frame');let previous='';";
+    html += "async function next(){try{const r=await fetch('/frame.jpg?t='+Date.now(),{cache:'no-store'});";
+    html += "if(!r.ok)throw Error('No frame');const blob=await r.blob();const url=URL.createObjectURL(blob);";
+    html += "const probe=new Image();probe.onload=()=>{img.src=url;if(previous)URL.revokeObjectURL(previous);previous=url;setTimeout(next,60)};";
+    html += "probe.onerror=()=>{URL.revokeObjectURL(url);setTimeout(next,250)};probe.src=url;";
+    html += "}catch(e){setTimeout(next,250)}}next();</script></body></html>";
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "text/html; charset=utf-8", html);
 }
 
 void handleWifiPage() {
     String html;
-    html += "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-    html += "<title>OpenMV Wi-Fi</title></head><body><h2>Wi-Fi configuration</h2>";
+    html += "<!doctype html><html lang='en'><head><meta charset='utf-8'>";
+    html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    html += "<title>OpenMV Wi-Fi</title></head><body><h2>Wi-Fi Configuration</h2>";
     html += "<form method='POST' action='/save_wifi'>";
-    html += "SSID: <input name='ssid'><br>Password: <input name='pass' type='password'><br>";
+    html += "SSID: <input name='ssid' maxlength='32' required><br>";
+    html += "Password: <input name='pass' type='password' maxlength='63'><br>";
     html += "<button type='submit'>Save and reboot</button></form>";
     html += "<form method='POST' action='/clear_wifi'><button type='submit'>Clear Wi-Fi</button></form>";
     html += "<p><a href='/'>Back</a></p></body></html>";
@@ -161,15 +159,35 @@ void handleWifiPage() {
 }
 
 void handleSaveWifi() {
-    if (!server.hasArg("ssid")) {
-        server.send(400, "text/plain", "ssid required");
+    String ssid = server.arg("ssid");
+    String password = server.arg("pass");
+    ssid.trim();
+
+    if (ssid.isEmpty() || ssid.length() > 32 || password.length() > 63) {
+        server.send(400, "text/plain; charset=utf-8", "Invalid SSID or password length");
         return;
     }
 
-    prefs.putString("ssid", server.arg("ssid"));
-    prefs.putString("pass", server.arg("pass"));
-    server.send(200, "text/plain; charset=utf-8", "Wi-Fi saved. Rebooting...");
-    delay(500);
+    const size_t ssidWritten = prefs.putString("ssid", ssid);
+    const size_t passWritten = prefs.putString("pass", password);
+    const bool verified = ssidWritten == ssid.length() &&
+                          passWritten == password.length() &&
+                          prefs.getString("ssid", "") == ssid &&
+                          prefs.getString("pass", "") == password;
+    if (!verified) {
+        Serial.printf("[WiFi] NVS save verification failed (ssid=%u pass=%u)\\n",
+                      static_cast<unsigned>(ssidWritten),
+                      static_cast<unsigned>(passWritten));
+        server.send(500, "text/plain; charset=utf-8", "Wi-Fi configuration was not saved; please retry");
+        return;
+    }
+
+    Serial.printf("[WiFi] NVS verified; saved SSID '%s' (%u chars)\\n",
+                  ssid.c_str(), static_cast<unsigned>(ssid.length()));
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain; charset=utf-8", "Wi-Fi saved and verified. Rebooting...");
+    server.client().flush();
+    delay(1000);
     ESP.restart();
 }
 
@@ -229,6 +247,7 @@ void handleNotFound() {
 void setupWebServer() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/wifi", HTTP_GET, handleWifiPage);
+    server.on("/video", HTTP_GET, handleVideoPage);
     server.on("/api/status", HTTP_GET, handleStatus);
     server.on("/frame.jpg", HTTP_GET, handleFrame);
 
