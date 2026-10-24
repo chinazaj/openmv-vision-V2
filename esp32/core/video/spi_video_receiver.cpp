@@ -11,9 +11,15 @@ constexpr int SPI_CS = 7;
 constexpr int FRAME_BUFFER_COUNT = 2;
 
 #if VIDEO_CORE_DEVELOPMENT
+constexpr size_t DIAG_HEAD_BYTES = 32;
+constexpr size_t DIAG_TAIL_BYTES = 18;
 portMUX_TYPE g_diagMux = portMUX_INITIALIZER_UNLOCKED;
 uint8_t g_lastGoodHeader[SpiVideoReceiver::SPI_HEADER_SIZE] = {};
 uint8_t g_lastBadHeader[SpiVideoReceiver::SPI_HEADER_SIZE] = {};
+uint8_t g_lastGoodHead[DIAG_HEAD_BYTES] = {};
+uint8_t g_lastBadHead[DIAG_HEAD_BYTES] = {};
+uint8_t g_lastGoodTail[DIAG_TAIL_BYTES] = {};
+uint8_t g_lastBadTail[DIAG_TAIL_BYTES] = {};
 uint32_t g_lastGoodHeaderLen = 0;
 uint32_t g_lastBadHeaderLen = 0;
 uint32_t g_lastGoodHeaderTx = 0;
@@ -241,6 +247,10 @@ void SpiVideoReceiver::printDiagnostics() const {
     const Stats stats = _stats;
     uint8_t lastGoodHeader[SPI_HEADER_SIZE] = {};
     uint8_t lastBadHeader[SPI_HEADER_SIZE] = {};
+    uint8_t lastGoodHead[DIAG_HEAD_BYTES] = {};
+    uint8_t lastBadHead[DIAG_HEAD_BYTES] = {};
+    uint8_t lastGoodTail[DIAG_TAIL_BYTES] = {};
+    uint8_t lastBadTail[DIAG_TAIL_BYTES] = {};
     uint32_t lastGoodHeaderLen = 0;
     uint32_t lastBadHeaderLen = 0;
     uint32_t lastGoodHeaderTx = 0;
@@ -248,6 +258,10 @@ void SpiVideoReceiver::printDiagnostics() const {
     portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&g_diagMux));
     memcpy(lastGoodHeader, g_lastGoodHeader, SPI_HEADER_SIZE);
     memcpy(lastBadHeader, g_lastBadHeader, SPI_HEADER_SIZE);
+    memcpy(lastGoodHead, g_lastGoodHead, DIAG_HEAD_BYTES);
+    memcpy(lastBadHead, g_lastBadHead, DIAG_HEAD_BYTES);
+    memcpy(lastGoodTail, g_lastGoodTail, DIAG_TAIL_BYTES);
+    memcpy(lastBadTail, g_lastBadTail, DIAG_TAIL_BYTES);
     lastGoodHeaderLen = g_lastGoodHeaderLen;
     lastBadHeaderLen = g_lastBadHeaderLen;
     lastGoodHeaderTx = g_lastGoodHeaderTx;
@@ -313,6 +327,22 @@ void SpiVideoReceiver::printDiagnostics() const {
                   static_cast<unsigned long>(lastBadHeaderLen));
     for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) Serial.printf(" %02X", lastBadHeader[i]);
     Serial.println();
+
+    Serial.printf("[SPI DIAG] raw_good_head tx=%lu:", static_cast<unsigned long>(lastGoodHeaderTx));
+    for (size_t i = 0; i < DIAG_HEAD_BYTES; ++i) Serial.printf(" %02X", lastGoodHead[i]);
+    Serial.println();
+
+    Serial.printf("[SPI DIAG] raw_good_tail tx=%lu:", static_cast<unsigned long>(lastGoodHeaderTx));
+    for (size_t i = 0; i < DIAG_TAIL_BYTES; ++i) Serial.printf(" %02X", lastGoodTail[i]);
+    Serial.println();
+
+    Serial.printf("[SPI DIAG] raw_bad_head tx=%lu:", static_cast<unsigned long>(lastBadHeaderTx));
+    for (size_t i = 0; i < DIAG_HEAD_BYTES; ++i) Serial.printf(" %02X", lastBadHead[i]);
+    Serial.println();
+
+    Serial.printf("[SPI DIAG] raw_bad_tail tx=%lu:", static_cast<unsigned long>(lastBadHeaderTx));
+    for (size_t i = 0; i < DIAG_TAIL_BYTES; ++i) Serial.printf(" %02X", lastBadTail[i]);
+    Serial.println();
 }
 #endif
 
@@ -371,9 +401,15 @@ void SpiVideoReceiver::receiveTask() {
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
             portENTER_CRITICAL(&g_diagMux);
+            memset(g_lastBadHeader, 0, SPI_HEADER_SIZE);
             memcpy(g_lastBadHeader, packetBuffer, receivedBytesOnWire);
-            if (receivedBytesOnWire < SPI_HEADER_SIZE) {
-                memset(g_lastBadHeader + receivedBytesOnWire, 0, SPI_HEADER_SIZE - receivedBytesOnWire);
+            memset(g_lastBadHead, 0, DIAG_HEAD_BYTES);
+            memcpy(g_lastBadHead, packetBuffer, receivedBytesOnWire < DIAG_HEAD_BYTES ? receivedBytesOnWire : DIAG_HEAD_BYTES);
+            memset(g_lastBadTail, 0, DIAG_TAIL_BYTES);
+            if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
+                memcpy(g_lastBadTail, packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES, DIAG_TAIL_BYTES);
+            } else if (receivedBytesOnWire > 0) {
+                memcpy(g_lastBadTail, packetBuffer, receivedBytesOnWire);
             }
             g_lastBadHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
             g_lastBadHeaderTx = _stats.transactions;
@@ -412,6 +448,13 @@ void SpiVideoReceiver::receiveTask() {
             memcpy(g_lastBadHeader, packetBuffer, SPI_HEADER_SIZE);
             g_lastBadHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
             g_lastBadHeaderTx = _stats.transactions;
+            memcpy(g_lastBadHead, packetBuffer, DIAG_HEAD_BYTES);
+            if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
+                memcpy(g_lastBadTail, packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES, DIAG_TAIL_BYTES);
+            } else {
+                memset(g_lastBadTail, 0, DIAG_TAIL_BYTES);
+                memcpy(g_lastBadTail, packetBuffer, receivedBytesOnWire);
+            }
             portEXIT_CRITICAL(&g_diagMux);
 #endif
             const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
@@ -426,6 +469,13 @@ void SpiVideoReceiver::receiveTask() {
         memcpy(g_lastGoodHeader, packetBuffer, SPI_HEADER_SIZE);
         g_lastGoodHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
         g_lastGoodHeaderTx = _stats.transactions;
+        memcpy(g_lastGoodHead, packetBuffer, DIAG_HEAD_BYTES);
+        if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
+            memcpy(g_lastGoodTail, packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES, DIAG_TAIL_BYTES);
+        } else {
+            memset(g_lastGoodTail, 0, DIAG_TAIL_BYTES);
+            memcpy(g_lastGoodTail, packetBuffer, receivedBytesOnWire);
+        }
         portEXIT_CRITICAL(&g_diagMux);
 #endif
 
