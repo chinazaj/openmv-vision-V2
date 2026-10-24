@@ -55,14 +55,25 @@ public:
         uint32_t bad_crc = 0;
         uint32_t no_receive_buffer = 0;
         uint32_t stale_receive_frame = 0;
+        uint32_t queue_errors = 0;
         uint32_t trans_len_0_31 = 0;
         uint32_t trans_len_32_4095 = 0;
         uint32_t trans_len_4096_8191 = 0;
         uint32_t trans_len_8192_plus = 0;
+        uint32_t bad_header_len_0_31 = 0;
+        uint32_t bad_header_len_32_4095 = 0;
+        uint32_t bad_header_len_4096_8191 = 0;
+        uint32_t bad_header_len_8192_plus = 0;
         uint32_t last_trans_len = 0;
+        uint32_t last_bad_header_len = 0;
         uint32_t last_good_frame_ms = 0;
         uint32_t consecutive_bad_transactions = 0;
         uint32_t max_consecutive_bad_transactions = 0;
+        uint32_t bad_burst_start_tx = 0;
+        uint32_t bad_burst_end_tx = 0;
+        uint32_t bad_burst_frame_id = 0;
+        uint32_t bad_burst_packet_idx = 0;
+        uint32_t recovered_after_bad_burst = 0;
 #endif
     };
 
