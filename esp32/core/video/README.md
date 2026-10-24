@@ -34,6 +34,17 @@ if (video.acquireLatestFrame(frame)) {
 
 `acquireLatestFrame()` always selects the newest completed frame. A frame is held until `releaseFrame()` is called; the receiver will never overwrite a buffer marked as being sent.
 
+## Development / Release mode
+
+All video-core diagnostic code is isolated by `video_build_config.h`.
+
+- `VIDEO_BUILD_MODE_DEVELOPMENT`: enables SPI transaction-length counters, header-error classification, sequence/frame validation counters, limited raw-header logging, and periodic diagnostic output.
+- `VIDEO_BUILD_MODE_RELEASE`: removes those development-only counters and verbose diagnostics from the build.
+
+The current branch is intentionally left in **DEVELOPMENT** mode while the SPI receive problem is being investigated. Before a production build, change `OPENMV_VIDEO_BUILD_MODE` to `VIDEO_BUILD_MODE_RELEASE` in `video_build_config.h`.
+
+Diagnostics are deliberately rate-limited so that serial output does not become a new source of SPI timing disturbance.
+
 ## Compatibility with OpenMV Video Core
 
 The receiver intentionally matches the current OpenMV defaults:
