@@ -10,8 +10,6 @@ constexpr int SPI_MISO = 5;
 constexpr int SPI_MOSI = 6;
 constexpr int SPI_CS = 7;
 constexpr int FRAME_BUFFER_COUNT = 2;
-
-// 0 = FREE, 1 = RECEIVING, 2 = READY, 3 = SENDING
 }
 
 SpiVideoReceiver::SpiVideoReceiver() = default;
@@ -243,6 +241,46 @@ void SpiVideoReceiver::resetStats() {
     portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&_frameMux));
 }
 
+#if VIDEO_CORE_DEVELOPMENT
+void SpiVideoReceiver::printDiagnostics() const {
+    const Stats stats = _stats;
+    Serial.printf(
+        "[SPI DIAG] tx=%lu full=%lu short=%lu zero=%lu last_len=%lu "
+        "len[0-31]=%lu len[32-4095]=%lu len[4096-8191]=%lu len[8192+]=%lu\n",
+        static_cast<unsigned long>(stats.transactions),
+        static_cast<unsigned long>(stats.full_transactions),
+        static_cast<unsigned long>(stats.short_transactions),
+        static_cast<unsigned long>(stats.zero_transactions),
+        static_cast<unsigned long>(stats.last_trans_len),
+        static_cast<unsigned long>(stats.trans_len_0_31),
+        static_cast<unsigned long>(stats.trans_len_32_4095),
+        static_cast<unsigned long>(stats.trans_len_4096_8191),
+        static_cast<unsigned long>(stats.trans_len_8192_plus));
+
+    Serial.printf(
+        "[SPI DIAG] bad: magic=%lu version=%lu type=%lu payload=%lu "
+        "packet_range=%lu frame_meta=%lu sequence=%lu jpeg=%lu crc=%lu\n",
+        static_cast<unsigned long>(stats.bad_magic),
+        static_cast<unsigned long>(stats.bad_version),
+        static_cast<unsigned long>(stats.bad_type),
+        static_cast<unsigned long>(stats.bad_payload),
+        static_cast<unsigned long>(stats.bad_packet_range),
+        static_cast<unsigned long>(stats.bad_frame_meta),
+        static_cast<unsigned long>(stats.bad_sequence),
+        static_cast<unsigned long>(stats.bad_jpeg),
+        static_cast<unsigned long>(stats.bad_crc));
+
+    Serial.printf(
+        "[SPI DIAG] state: no_buf=%lu stale_frame=%lu consecutive_bad=%lu "
+        "max_consecutive_bad=%lu last_good_frame_ms=%lu\n",
+        static_cast<unsigned long>(stats.no_receive_buffer),
+        static_cast<unsigned long>(stats.stale_receive_frame),
+        static_cast<unsigned long>(stats.consecutive_bad_transactions),
+        static_cast<unsigned long>(stats.max_consecutive_bad_transactions),
+        static_cast<unsigned long>(stats.last_good_frame_ms));
+}
+#endif
+
 void SpiVideoReceiver::receiveTaskEntry(void* arg) {
     static_cast<SpiVideoReceiver*>(arg)->receiveTask();
     vTaskDelete(nullptr);
@@ -262,8 +300,6 @@ void SpiVideoReceiver::receiveTask() {
         transaction.length = SPI_PACKET_SIZE * 8;
         transaction.rx_buffer = _dmaRxBuffer;
 
-        // Same transaction timing as the validated firmware: one complete
-        // OpenMV packet is received per spi_slave_transmit() call.
         const esp_err_t result = spi_slave_transmit(
             SPI2_HOST,
             &transaction,
@@ -274,53 +310,128 @@ void SpiVideoReceiver::receiveTask() {
         }
 
         const size_t receivedBytesOnWire = transaction.trans_len / 8;
+
+#if VIDEO_CORE_DEVELOPMENT
+        ++_stats.transactions;
+        _stats.last_trans_len = static_cast<uint32_t>(receivedBytesOnWire);
+        if (receivedBytesOnWire == 0) {
+            ++_stats.zero_transactions;
+        } else if (receivedBytesOnWire == SPI_PACKET_SIZE) {
+            ++_stats.full_transactions;
+        } else {
+            ++_stats.short_transactions;
+        }
+        if (receivedBytesOnWire < 32) {
+            ++_stats.trans_len_0_31;
+        } else if (receivedBytesOnWire < SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE) {
+            ++_stats.trans_len_32_4095;
+        } else if (receivedBytesOnWire < SPI_PACKET_SIZE * 2) {
+            ++_stats.trans_len_4096_8191;
+        } else {
+            ++_stats.trans_len_8192_plus;
+        }
+#endif
+
         if (receivedBytesOnWire < SPI_HEADER_SIZE) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.short_transactions;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
         PacketHeader header{};
-        if (!parseHeader(_dmaRxBuffer, header)) {
+        parseHeader(_dmaRxBuffer, header);
+        const bool magicOk = header.magic == SPI_MAGIC;
+        const bool versionOk = header.version == SPI_VERSION;
+        const bool typeOk = header.type == SPI_TYPE_FRAME;
+
+        if (!magicOk || !versionOk || !typeOk) {
             ++_stats.bad_frames;
             ++_stats.bad_headers;
+#if VIDEO_CORE_DEVELOPMENT
+            if (!magicOk) ++_stats.bad_magic;
+            if (!versionOk) ++_stats.bad_version;
+            if (!typeOk) ++_stats.bad_type;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
 
-            static bool firstBadHeaderLogged = false;
-            if (!firstBadHeaderLogged) {
-                firstBadHeaderLogged = true;
-                Serial.println("[SPI DIAG] First invalid header bytes:");
-                for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) {
-                    Serial.printf("%02X%s", _dmaRxBuffer[i],
-                                  (i + 1 == SPI_HEADER_SIZE) ? "\n" : " ");
-                }
+            // Only print the first few invalid headers so diagnostics cannot
+            // materially perturb SPI timing.
+            static uint32_t invalidHeaderLogCount = 0;
+            if (invalidHeaderLogCount < 8) {
+                ++invalidHeaderLogCount;
                 Serial.printf(
-                    "[SPI DIAG] bytes=%u magic=0x%04X version=%u type=%u "
-                    "frame=%u packet=%u/%u payload=%u frame_size=%lu crc=0x%04X\n",
+                    "[SPI DIAG] invalid header #%lu len=%u "
+                    "magic=0x%04X version=%u type=%u frame=%u packet=%u/%u "
+                    "payload=%u frame_size=%lu crc=0x%04X\n",
+                    static_cast<unsigned long>(invalidHeaderLogCount),
                     static_cast<unsigned>(receivedBytesOnWire),
                     header.magic, header.version, header.type, header.frame_id,
                     header.packet_idx, header.total_packets, header.payload_len,
                     static_cast<unsigned long>(header.frame_size), header.frame_crc16);
+                Serial.print("[SPI DIAG] raw:");
+                for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) {
+                    Serial.printf(" %02X", _dmaRxBuffer[i]);
+                }
+                Serial.println();
             }
+#endif
             continue;
         }
 
         if (header.payload_len == 0 || header.payload_len > SPI_PAYLOAD_SIZE) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_payload;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
         if (SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_payload;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
         if (header.total_packets == 0 || header.packet_idx >= header.total_packets) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_packet_range;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
         if (header.frame_size < 4 || header.frame_size > MAX_FRAME_SIZE) {
             ++_stats.bad_frames;
             ++_stats.oversize;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_frame_meta;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
@@ -328,11 +439,21 @@ void SpiVideoReceiver::receiveTask() {
             (header.frame_size + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
         if (header.total_packets != calculatedPackets) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_frame_meta;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             continue;
         }
 
         if (header.packet_idx == 0) {
             if (rxBufferIndex >= 0) {
+#if VIDEO_CORE_DEVELOPMENT
+                ++_stats.stale_receive_frame;
+#endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
@@ -342,6 +463,9 @@ void SpiVideoReceiver::receiveTask() {
             rxBufferIndex = findReceiveBuffer();
             if (rxBufferIndex < 0) {
                 ++_stats.dropped_frames;
+#if VIDEO_CORE_DEVELOPMENT
+                ++_stats.no_receive_buffer;
+#endif
                 continue;
             }
 
@@ -360,6 +484,13 @@ void SpiVideoReceiver::receiveTask() {
             header.frame_size != expectedFrameSize ||
             header.frame_crc16 != expectedFrameCrc) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_sequence;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             if (rxBufferIndex >= 0) {
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
@@ -371,6 +502,13 @@ void SpiVideoReceiver::receiveTask() {
 
         if (receivedBytes + header.payload_len > MAX_FRAME_SIZE) {
             ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            ++_stats.bad_frame_meta;
+            ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+            }
+#endif
             portENTER_CRITICAL(&_frameMux);
             _bufferState[rxBufferIndex] = 0;
             portEXIT_CRITICAL(&_frameMux);
@@ -378,8 +516,6 @@ void SpiVideoReceiver::receiveTask() {
             continue;
         }
 
-        // Keep the stable firmware's sequential frame-buffer layout. The
-        // packet index is already validated against nextPacket above.
         memcpy(
             _frameBuffers[rxBufferIndex] + receivedBytes,
             _dmaRxBuffer + SPI_HEADER_SIZE,
@@ -391,6 +527,13 @@ void SpiVideoReceiver::receiveTask() {
         if (header.packet_idx == header.total_packets - 1) {
             if (receivedBytes != expectedFrameSize) {
                 ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+                ++_stats.bad_frame_meta;
+                ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                    _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+                }
+#endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
@@ -403,6 +546,13 @@ void SpiVideoReceiver::receiveTask() {
                 jpeg[receivedBytes - 2] != 0xFF ||
                 jpeg[receivedBytes - 1] != 0xD9) {
                 ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+                ++_stats.bad_jpeg;
+                ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                    _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+                }
+#endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
@@ -415,6 +565,13 @@ void SpiVideoReceiver::receiveTask() {
                 receivedBytes);
             if (crc != expectedFrameCrc) {
                 ++_stats.bad_frames;
+#if VIDEO_CORE_DEVELOPMENT
+                ++_stats.bad_crc;
+                ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                    _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
+                }
+#endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
@@ -435,6 +592,10 @@ void SpiVideoReceiver::receiveTask() {
 
             publishFrame(rxBufferIndex, receivedBytes, rxFrameId);
             ++_stats.ok_frames;
+#if VIDEO_CORE_DEVELOPMENT
+            _stats.last_good_frame_ms = millis();
+            _stats.consecutive_bad_transactions = 0;
+#endif
             rxBufferIndex = -1;
         }
     }
