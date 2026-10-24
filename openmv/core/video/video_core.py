@@ -37,10 +37,6 @@ class VideoTransmitter:
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
 
-    # Give the ESP32-C3 a small recovery window between SPI transactions.
-    # This is intentionally a fixed test parameter for now; it can be removed
-    # once the receiver throughput limit is understood.
-    DEFAULT_PACKET_INTERVAL_MS = 1
 
     def __init__(self):
         self.spi = SPI(
@@ -56,7 +52,6 @@ class VideoTransmitter:
         self._payload_size = self.DEFAULT_PAYLOAD_SIZE
         self._max_frame_size = self.DEFAULT_MAX_FRAME_SIZE
         self._jpeg_quality = self.DEFAULT_JPEG_QUALITY
-        self._packet_interval_ms = self.DEFAULT_PACKET_INTERVAL_MS
 
         self._frame_id = 0
         self._sent_frames = 0
@@ -115,8 +110,6 @@ class VideoTransmitter:
         finally:
             self.cs.high()
 
-        if self._packet_interval_ms > 0:
-            time.sleep_ms(self._packet_interval_ms)
         return True
 
     def send_frame(self, img):
