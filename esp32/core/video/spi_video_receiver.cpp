@@ -254,6 +254,21 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.bad_jpeg),
         static_cast<unsigned long>(stats.bad_crc));
     Serial.printf(
+        "[SPI DIAG] burst: qerr=%lu bad_len[0-31]=%lu bad_len[32-4095]=%lu "
+        "bad_len[4096-8191]=%lu bad_len[8192+]=%lu last_bad_len=%lu "
+        "burst_start=%lu burst_end=%lu burst_frame=%lu burst_packet=%lu recovered=%lu\n",
+        static_cast<unsigned long>(stats.queue_errors),
+        static_cast<unsigned long>(stats.bad_header_len_0_31),
+        static_cast<unsigned long>(stats.bad_header_len_32_4095),
+        static_cast<unsigned long>(stats.bad_header_len_4096_8191),
+        static_cast<unsigned long>(stats.bad_header_len_8192_plus),
+        static_cast<unsigned long>(stats.last_bad_header_len),
+        static_cast<unsigned long>(stats.bad_burst_start_tx),
+        static_cast<unsigned long>(stats.bad_burst_end_tx),
+        static_cast<unsigned long>(stats.bad_burst_frame_id),
+        static_cast<unsigned long>(stats.bad_burst_packet_idx),
+        static_cast<unsigned long>(stats.recovered_after_bad_burst));
+    Serial.printf(
         "[SPI DIAG] state: no_buf=%lu stale_frame=%lu consecutive_bad=%lu "
         "max_consecutive_bad=%lu last_good_frame_ms=%lu\n",
         static_cast<unsigned long>(stats.no_receive_buffer),
@@ -310,10 +325,19 @@ void SpiVideoReceiver::receiveTask() {
             ++_stats.bad_frames;
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
+            _stats.last_bad_header_len = static_cast<uint32_t>(receivedBytesOnWire);
+            if (receivedBytesOnWire < 32) ++_stats.bad_header_len_0_31;
+            else if (receivedBytesOnWire < SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE) ++_stats.bad_header_len_32_4095;
+            else if (receivedBytesOnWire < SPI_PACKET_SIZE * 2) ++_stats.bad_header_len_4096_8191;
+            else ++_stats.bad_header_len_8192_plus;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -331,6 +355,12 @@ void SpiVideoReceiver::receiveTask() {
             if (!versionOk) ++_stats.bad_version;
             if (!typeOk) ++_stats.bad_type;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
+            _stats.last_bad_header_len = static_cast<uint32_t>(receivedBytesOnWire);
+            if (receivedBytesOnWire < 32) ++_stats.bad_header_len_0_31;
+            else if (receivedBytesOnWire < SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE) ++_stats.bad_header_len_32_4095;
+            else if (receivedBytesOnWire < SPI_PACKET_SIZE * 2) ++_stats.bad_header_len_4096_8191;
+            else ++_stats.bad_header_len_8192_plus;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 
@@ -350,7 +380,10 @@ void SpiVideoReceiver::receiveTask() {
                 Serial.println();
             }
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -359,10 +392,14 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_payload;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -371,10 +408,14 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_payload;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -383,10 +424,14 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_packet_range;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -396,10 +441,14 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -409,10 +458,14 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -433,7 +486,10 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.no_receive_buffer;
 #endif
-                spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+                const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+                if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
                 continue;
             }
 
@@ -443,6 +499,12 @@ void SpiVideoReceiver::receiveTask() {
             expectedFrameCrc = header.frame_crc16;
             receivedBytes = 0;
             nextPacket = 0;
+#if VIDEO_CORE_DEVELOPMENT
+            if (_stats.consecutive_bad_transactions > 0) {
+                _stats.bad_burst_end_tx = _stats.transactions - 1;
+                _stats.recovered_after_bad_burst++;
+            }
+#endif
         }
 
         if (rxBufferIndex < 0 ||
@@ -455,6 +517,11 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_sequence;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) {
+                _stats.bad_burst_start_tx = _stats.transactions;
+                _stats.bad_burst_frame_id = header.frame_id;
+                _stats.bad_burst_packet_idx = header.packet_idx;
+            }
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
@@ -464,7 +531,10 @@ void SpiVideoReceiver::receiveTask() {
                 portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
             }
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -473,6 +543,7 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
+            if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
             if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
@@ -480,7 +551,10 @@ void SpiVideoReceiver::receiveTask() {
             _bufferState[rxBufferIndex] = 0;
             portEXIT_CRITICAL(&_frameMux);
             rxBufferIndex = -1;
-            spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+            const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
@@ -495,6 +569,7 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_frame_meta;
                 ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
                 if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
@@ -502,7 +577,10 @@ void SpiVideoReceiver::receiveTask() {
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
-                spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+                const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+                if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
                 continue;
             }
 
@@ -513,6 +591,7 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_jpeg;
                 ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
                 if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
@@ -520,7 +599,10 @@ void SpiVideoReceiver::receiveTask() {
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
-                spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+                const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+                if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
                 continue;
             }
 
@@ -530,6 +612,7 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_crc;
                 ++_stats.consecutive_bad_transactions;
+                if (_stats.consecutive_bad_transactions == 1) _stats.bad_burst_start_tx = _stats.transactions;
                 if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
 #endif
@@ -537,7 +620,10 @@ void SpiVideoReceiver::receiveTask() {
                 _bufferState[rxBufferIndex] = 0;
                 portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
-                spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+                const esp_err_t queueResult = spi_slave_queue_trans(SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+                if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
                 continue;
             }
 
@@ -552,6 +638,10 @@ void SpiVideoReceiver::receiveTask() {
             ++_stats.ok_frames;
 #if VIDEO_CORE_DEVELOPMENT
             _stats.last_good_frame_ms = millis();
+            if (_stats.consecutive_bad_transactions > 0) {
+                _stats.bad_burst_end_tx = _stats.transactions - 1;
+                ++_stats.recovered_after_bad_burst;
+            }
             _stats.consecutive_bad_transactions = 0;
 #endif
             rxBufferIndex = -1;
@@ -559,13 +649,8 @@ void SpiVideoReceiver::receiveTask() {
 
         const esp_err_t queueResult = spi_slave_queue_trans(
             SPI2_HOST, transaction, pdMS_TO_TICKS(1000));
-        if (queueResult != ESP_OK) {
-            // A failed requeue means this DMA slot is no longer available to
-            // the receiver. Leave the remaining queued transactions intact;
-            // diagnostics will reveal whether the queue subsequently drains.
 #if VIDEO_CORE_DEVELOPMENT
-            ++_stats.timeouts;
+        if (queueResult != ESP_OK) ++_stats.queue_errors;
 #endif
-        }
     }
 }
