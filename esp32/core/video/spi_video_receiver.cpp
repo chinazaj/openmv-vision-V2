@@ -25,15 +25,9 @@ bool SpiVideoReceiver::begin() {
         return true;
     }
 
-    _mutex = xSemaphoreCreateMutex();
-    if (_mutex == nullptr) {
-        return false;
-    }
-
     _dmaRxBuffer = static_cast<uint8_t*>(
-        heap_caps_malloc(SPI_PACKET_SIZE, MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+        heap_caps_malloc(SPI_PACKET_SIZE, MALLOC_CAP_DMA));
     if (_dmaRxBuffer == nullptr) {
-        end();
         return false;
     }
 
@@ -74,16 +68,17 @@ bool SpiVideoReceiver::begin() {
     }
 
     _running = true;
-    BaseType_t taskResult = xTaskCreate(
+    const BaseType_t taskResult = xTaskCreate(
         &SpiVideoReceiver::receiveTaskEntry,
-        "spi_video_rx",
-        4096,
+        "spi_rx",
+        6144,
         this,
         3,
         &_task);
     if (taskResult != pdPASS) {
         _running = false;
         spi_slave_free(SPI2_HOST);
+        _task = nullptr;
         end();
         return false;
     }
@@ -94,15 +89,16 @@ bool SpiVideoReceiver::begin() {
 void SpiVideoReceiver::end() {
     _running = false;
 
-    // spi_slave_transmit() is intentionally blocking while waiting for the
-    // OpenMV master. The product normally keeps the receiver alive for its
-    // lifetime, so cleanup is best-effort here.
+    // The product keeps the receiver alive for its lifetime. Cleanup here is
+    // best-effort because spi_slave_transmit() may be waiting for the master.
     if (_task != nullptr && xTaskGetCurrentTaskHandle() != _task) {
         vTaskDelay(pdMS_TO_TICKS(10));
         _task = nullptr;
     }
 
-    spi_slave_free(SPI2_HOST);
+    if (_dmaRxBuffer != nullptr || _frameBuffers[0] != nullptr || _frameBuffers[1] != nullptr) {
+        spi_slave_free(SPI2_HOST);
+    }
 
     if (_dmaRxBuffer != nullptr) {
         heap_caps_free(_dmaRxBuffer);
@@ -114,11 +110,6 @@ void SpiVideoReceiver::end() {
             heap_caps_free(buffer);
             buffer = nullptr;
         }
-    }
-
-    if (_mutex != nullptr) {
-        vSemaphoreDelete(_mutex);
-        _mutex = nullptr;
     }
 
     _readyBuffer = -1;
@@ -156,20 +147,15 @@ bool SpiVideoReceiver::parseHeader(const uint8_t* packet, PacketHeader& header) 
     header.frame_crc16 = static_cast<uint16_t>(packet[16]) |
                          static_cast<uint16_t>(packet[17]) << 8;
 
-    // Match the original firmware's header-error counter semantics:
-    // this function validates the fixed signature/version/type only.
-    // Length and packet-field validation is handled by receiveTask().
     return header.magic == SPI_MAGIC &&
            header.version == SPI_VERSION &&
            header.type == SPI_TYPE_FRAME;
 }
 
 int SpiVideoReceiver::findReceiveBuffer() {
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        return -1;
-    }
-
     int index = -1;
+    portENTER_CRITICAL(&_frameMux);
+
     for (int i = 0; i < FRAME_BUFFER_COUNT; ++i) {
         if (_bufferState[i] == 0) {
             index = i;
@@ -177,8 +163,8 @@ int SpiVideoReceiver::findReceiveBuffer() {
         }
     }
 
-    // If both buffers are occupied, sacrifice an unpublished READY frame.
-    // Never overwrite a frame currently being sent to an HTTP client.
+    // Match the stable firmware: if both buffers are occupied, sacrifice an
+    // unpublished READY frame, but never overwrite the HTTP SENDING buffer.
     if (index < 0 && _readyBuffer >= 0 && _bufferState[_readyBuffer] == 2) {
         index = _readyBuffer;
         _readyBuffer = -1;
@@ -190,16 +176,12 @@ int SpiVideoReceiver::findReceiveBuffer() {
         _bufferSize[index] = 0;
     }
 
-    xSemaphoreGive(_mutex);
+    portEXIT_CRITICAL(&_frameMux);
     return index;
 }
 
 void SpiVideoReceiver::publishFrame(int index, size_t size, uint16_t frameId) {
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ++_stats.dropped_frames;
-        _bufferState[index] = 0;
-        return;
-    }
+    portENTER_CRITICAL(&_frameMux);
 
     _bufferSize[index] = size;
     _bufferFrameId[index] = frameId;
@@ -213,41 +195,41 @@ void SpiVideoReceiver::publishFrame(int index, size_t size, uint16_t frameId) {
         ++_stats.dropped_frames;
     }
 
-    xSemaphoreGive(_mutex);
+    portEXIT_CRITICAL(&_frameMux);
 }
 
 bool SpiVideoReceiver::acquireLatestFrame(FrameView& frame) {
     frame = FrameView{};
-    if (_mutex == nullptr || xSemaphoreTake(_mutex, pdMS_TO_TICKS(20)) != pdTRUE) {
-        return false;
-    }
+    portENTER_CRITICAL(&_frameMux);
 
-    if (_readyBuffer >= 0 && _bufferState[_readyBuffer] == 2) {
+    if (_readyBuffer >= 0) {
         const int index = _readyBuffer;
         _readyBuffer = -1;
-        _bufferState[index] = 3;
-        frame.data = _frameBuffers[index];
-        frame.size = _bufferSize[index];
-        frame.buffer_index = index;
-        frame.frame_id = _bufferFrameId[index];
+
+        if (_bufferState[index] == 2) {
+            _bufferState[index] = 3;
+            frame.data = _frameBuffers[index];
+            frame.size = _bufferSize[index];
+            frame.buffer_index = index;
+            frame.frame_id = _bufferFrameId[index];
+        }
     }
 
-    xSemaphoreGive(_mutex);
+    portEXIT_CRITICAL(&_frameMux);
     return frame.buffer_index >= 0;
 }
 
 void SpiVideoReceiver::releaseFrame(FrameView& frame) {
-    if (frame.buffer_index < 0 || frame.buffer_index >= FRAME_BUFFER_COUNT || _mutex == nullptr) {
+    if (frame.buffer_index < 0 || frame.buffer_index >= FRAME_BUFFER_COUNT) {
         frame = FrameView{};
         return;
     }
 
-    if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-        if (_bufferState[frame.buffer_index] == 3) {
-            _bufferState[frame.buffer_index] = 0;
-        }
-        xSemaphoreGive(_mutex);
+    portENTER_CRITICAL(&_frameMux);
+    if (_bufferState[frame.buffer_index] == 3) {
+        _bufferState[frame.buffer_index] = 0;
     }
+    portEXIT_CRITICAL(&_frameMux);
     frame = FrameView{};
 }
 
@@ -256,12 +238,9 @@ SpiVideoReceiver::Stats SpiVideoReceiver::getStats() const {
 }
 
 void SpiVideoReceiver::resetStats() {
-    if (_mutex != nullptr && xSemaphoreTake(_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
-        _stats = Stats{};
-        xSemaphoreGive(_mutex);
-    } else {
-        _stats = Stats{};
-    }
+    portENTER_CRITICAL(const_cast<portMUX_TYPE*>(&_frameMux));
+    _stats = Stats{};
+    portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&_frameMux));
 }
 
 void SpiVideoReceiver::receiveTaskEntry(void* arg) {
@@ -283,10 +262,12 @@ void SpiVideoReceiver::receiveTask() {
         transaction.length = SPI_PACKET_SIZE * 8;
         transaction.rx_buffer = _dmaRxBuffer;
 
-        const esp_err_t result = spi_slave_transmit(SPI2_HOST, &transaction, portMAX_DELAY);
-        if (!_running) {
-            break;
-        }
+        // Same transaction timing as the validated firmware: one complete
+        // OpenMV packet is received per spi_slave_transmit() call.
+        const esp_err_t result = spi_slave_transmit(
+            SPI2_HOST,
+            &transaction,
+            pdMS_TO_TICKS(1000));
         if (result != ESP_OK) {
             ++_stats.timeouts;
             continue;
@@ -295,20 +276,14 @@ void SpiVideoReceiver::receiveTask() {
         const size_t receivedBytesOnWire = transaction.trans_len / 8;
         if (receivedBytesOnWire < SPI_HEADER_SIZE) {
             ++_stats.bad_frames;
-            if (rxBufferIndex >= 0) {
-                _bufferState[rxBufferIndex] = 0;
-                rxBufferIndex = -1;
-            }
             continue;
         }
 
         PacketHeader header{};
         if (!parseHeader(_dmaRxBuffer, header)) {
-            ++_stats.bad_headers;
             ++_stats.bad_frames;
+            ++_stats.bad_headers;
 
-            // Log the first complete invalid header so wire-level protocol
-            // mismatches can be diagnosed without flooding the serial port.
             static bool firstBadHeaderLogged = false;
             if (!firstBadHeaderLogged) {
                 firstBadHeaderLogged = true;
@@ -325,69 +300,51 @@ void SpiVideoReceiver::receiveTask() {
                     header.packet_idx, header.total_packets, header.payload_len,
                     static_cast<unsigned long>(header.frame_size), header.frame_crc16);
             }
-
-            if (rxBufferIndex >= 0) {
-                _bufferState[rxBufferIndex] = 0;
-                rxBufferIndex = -1;
-            }
             continue;
         }
 
-        const size_t maxPacketCount =
-            (MAX_FRAME_SIZE + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
-        if (header.total_packets == 0 ||
-            header.total_packets > maxPacketCount ||
-            header.payload_len == 0 ||
-            header.payload_len > SPI_PAYLOAD_SIZE ||
-            header.frame_size < 4 ||
-            header.frame_size > MAX_FRAME_SIZE) {
+        if (header.payload_len == 0 || header.payload_len > SPI_PAYLOAD_SIZE) {
             ++_stats.bad_frames;
-            if (header.frame_size < 4 || header.frame_size > MAX_FRAME_SIZE) {
-                ++_stats.oversize;
-            }
-            if (rxBufferIndex >= 0) {
-                _bufferState[rxBufferIndex] = 0;
-                rxBufferIndex = -1;
-            }
             continue;
         }
 
-        // trans_len is the number of bits actually clocked by the master.
-        // Never copy payload bytes that were not received in this transaction.
         if (SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
             ++_stats.bad_frames;
-            if (rxBufferIndex >= 0) {
-                _bufferState[rxBufferIndex] = 0;
-                rxBufferIndex = -1;
-            }
             continue;
         }
 
-        const size_t expectedTotalPackets =
+        if (header.total_packets == 0 || header.packet_idx >= header.total_packets) {
+            ++_stats.bad_frames;
+            continue;
+        }
+
+        if (header.frame_size < 4 || header.frame_size > MAX_FRAME_SIZE) {
+            ++_stats.bad_frames;
+            ++_stats.oversize;
+            continue;
+        }
+
+        const uint32_t calculatedPackets =
             (header.frame_size + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
-        if (expectedTotalPackets != header.total_packets ||
-            header.packet_idx >= header.total_packets ||
-            (header.packet_idx + 1 < header.total_packets && header.payload_len != SPI_PAYLOAD_SIZE) ||
-            (header.packet_idx + 1 == header.total_packets &&
-             header.payload_len != header.frame_size -
-                 static_cast<uint32_t>(header.packet_idx) * SPI_PAYLOAD_SIZE)) {
-            if (rxBufferIndex >= 0) {
-                _bufferState[rxBufferIndex] = 0;
-                rxBufferIndex = -1;
-            }
+        if (header.total_packets != calculatedPackets) {
             ++_stats.bad_frames;
             continue;
         }
 
         if (header.packet_idx == 0) {
             if (rxBufferIndex >= 0) {
+                portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
+                portEXIT_CRITICAL(&_frameMux);
+                rxBufferIndex = -1;
             }
+
             rxBufferIndex = findReceiveBuffer();
             if (rxBufferIndex < 0) {
                 ++_stats.dropped_frames;
                 continue;
             }
+
             rxFrameId = header.frame_id;
             expectedPackets = header.total_packets;
             expectedFrameSize = header.frame_size;
@@ -398,58 +355,85 @@ void SpiVideoReceiver::receiveTask() {
 
         if (rxBufferIndex < 0 ||
             header.frame_id != rxFrameId ||
+            header.packet_idx != nextPacket ||
             header.total_packets != expectedPackets ||
             header.frame_size != expectedFrameSize ||
-            header.frame_crc16 != expectedFrameCrc ||
-            header.packet_idx != nextPacket) {
+            header.frame_crc16 != expectedFrameCrc) {
             ++_stats.bad_frames;
             if (rxBufferIndex >= 0) {
+                portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
+                portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
             }
             continue;
         }
 
-        const size_t offset = static_cast<size_t>(header.packet_idx) * SPI_PAYLOAD_SIZE;
-        if (offset + header.payload_len > MAX_FRAME_SIZE ||
-            offset + header.payload_len > expectedFrameSize) {
-            ++_stats.oversize;
+        if (receivedBytes + header.payload_len > MAX_FRAME_SIZE) {
             ++_stats.bad_frames;
+            portENTER_CRITICAL(&_frameMux);
             _bufferState[rxBufferIndex] = 0;
+            portEXIT_CRITICAL(&_frameMux);
             rxBufferIndex = -1;
             continue;
         }
 
-        memcpy(_frameBuffers[rxBufferIndex] + offset, _dmaRxBuffer + SPI_HEADER_SIZE, header.payload_len);
+        // Keep the stable firmware's sequential frame-buffer layout. The
+        // packet index is already validated against nextPacket above.
+        memcpy(
+            _frameBuffers[rxBufferIndex] + receivedBytes,
+            _dmaRxBuffer + SPI_HEADER_SIZE,
+            header.payload_len);
+
         receivedBytes += header.payload_len;
         ++nextPacket;
 
-        if (nextPacket == expectedPackets) {
-            const uint8_t* jpeg = _frameBuffers[rxBufferIndex];
-            if (receivedBytes != expectedFrameSize ||
-                expectedFrameSize < 4 ||
-                jpeg[0] != 0xFF || jpeg[1] != 0xD8 ||
-                jpeg[expectedFrameSize - 2] != 0xFF ||
-                jpeg[expectedFrameSize - 1] != 0xD9 ||
-                crc16Ccitt(jpeg, expectedFrameSize) != expectedFrameCrc) {
+        if (header.packet_idx == header.total_packets - 1) {
+            if (receivedBytes != expectedFrameSize) {
                 ++_stats.bad_frames;
+                portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
+                portEXIT_CRITICAL(&_frameMux);
+                rxBufferIndex = -1;
+                continue;
+            }
+
+            const uint8_t* jpeg = _frameBuffers[rxBufferIndex];
+            if (jpeg[0] != 0xFF || jpeg[1] != 0xD8 ||
+                jpeg[receivedBytes - 2] != 0xFF ||
+                jpeg[receivedBytes - 1] != 0xD9) {
+                ++_stats.bad_frames;
+                portENTER_CRITICAL(&_frameMux);
+                _bufferState[rxBufferIndex] = 0;
+                portEXIT_CRITICAL(&_frameMux);
+                rxBufferIndex = -1;
+                continue;
+            }
+
+            const uint16_t crc = crc16Ccitt(
+                _frameBuffers[rxBufferIndex],
+                receivedBytes);
+            if (crc != expectedFrameCrc) {
+                ++_stats.bad_frames;
+                portENTER_CRITICAL(&_frameMux);
+                _bufferState[rxBufferIndex] = 0;
+                portEXIT_CRITICAL(&_frameMux);
                 rxBufferIndex = -1;
                 continue;
             }
 
             if (_haveLastFrameId) {
-                const uint16_t frameIdDelta = static_cast<uint16_t>(rxFrameId - _lastFrameId);
+                const uint16_t frameIdDelta =
+                    static_cast<uint16_t>(rxFrameId - _lastFrameId);
                 if (frameIdDelta > 1) {
-                    // Preserve the original firmware's metric: count missing
-                    // frame IDs, not merely the number of gap events.
-                    _stats.frame_id_gaps += static_cast<uint32_t>(frameIdDelta - 1);
+                    _stats.frame_id_gaps +=
+                        static_cast<uint32_t>(frameIdDelta - 1);
                 }
             }
             _lastFrameId = rxFrameId;
             _haveLastFrameId = true;
 
-            publishFrame(rxBufferIndex, expectedFrameSize, rxFrameId);
+            publishFrame(rxBufferIndex, receivedBytes, rxFrameId);
             ++_stats.ok_frames;
             rxBufferIndex = -1;
         }
