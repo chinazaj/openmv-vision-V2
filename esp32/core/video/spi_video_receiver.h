@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/semphr.h>
 
 class SpiVideoReceiver {
 public:
@@ -75,10 +74,9 @@ private:
     volatile uint16_t _bufferFrameId[2] = {0, 0};
     volatile int _readyBuffer = -1;
 
-    SemaphoreHandle_t _mutex = nullptr;
+    portMUX_TYPE _frameMux = portMUX_INITIALIZER_UNLOCKED;
     TaskHandle_t _task = nullptr;
     volatile bool _running = false;
-    bool _spiInitialized = false;
 
     Stats _stats;
     uint16_t _lastFrameId = 0;
