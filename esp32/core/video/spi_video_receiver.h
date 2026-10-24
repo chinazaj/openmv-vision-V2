@@ -115,6 +115,7 @@ private:
     portMUX_TYPE _frameMux = portMUX_INITIALIZER_UNLOCKED;
     TaskHandle_t _task = nullptr;
     volatile bool _running = false;
+    bool _spiInitialized = false;
 
     Stats _stats;
     uint16_t _lastFrameId = 0;
