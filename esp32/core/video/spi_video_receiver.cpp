@@ -19,19 +19,13 @@ SpiVideoReceiver::~SpiVideoReceiver() {
 }
 
 bool SpiVideoReceiver::begin() {
-    if (_running) {
-        return true;
-    }
+    if (_running) return true;
 
-    _dmaRxBuffer = static_cast<uint8_t*>(
-        heap_caps_malloc(SPI_PACKET_SIZE, MALLOC_CAP_DMA));
-    if (_dmaRxBuffer == nullptr) {
-        return false;
-    }
+    _dmaRxBuffer = static_cast<uint8_t*>(heap_caps_malloc(SPI_PACKET_SIZE, MALLOC_CAP_DMA));
+    if (_dmaRxBuffer == nullptr) return false;
 
     for (int i = 0; i < FRAME_BUFFER_COUNT; ++i) {
-        _frameBuffers[i] = static_cast<uint8_t*>(
-            heap_caps_malloc(MAX_FRAME_SIZE, MALLOC_CAP_8BIT));
+        _frameBuffers[i] = static_cast<uint8_t*>(heap_caps_malloc(MAX_FRAME_SIZE, MALLOC_CAP_8BIT));
         if (_frameBuffers[i] == nullptr) {
             end();
             return false;
@@ -55,11 +49,7 @@ bool SpiVideoReceiver::begin() {
     slvcfg.queue_size = 1;
     slvcfg.mode = 0;
 
-    const esp_err_t initResult = spi_slave_initialize(
-        SPI2_HOST,
-        &buscfg,
-        &slvcfg,
-        SPI_DMA_CH_AUTO);
+    const esp_err_t initResult = spi_slave_initialize(SPI2_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO);
     if (initResult != ESP_OK) {
         end();
         return false;
@@ -67,12 +57,7 @@ bool SpiVideoReceiver::begin() {
 
     _running = true;
     const BaseType_t taskResult = xTaskCreate(
-        &SpiVideoReceiver::receiveTaskEntry,
-        "spi_rx",
-        6144,
-        this,
-        3,
-        &_task);
+        &SpiVideoReceiver::receiveTaskEntry, "spi_rx", 6144, this, 3, &_task);
     if (taskResult != pdPASS) {
         _running = false;
         spi_slave_free(SPI2_HOST);
@@ -80,15 +65,12 @@ bool SpiVideoReceiver::begin() {
         end();
         return false;
     }
-
     return true;
 }
 
 void SpiVideoReceiver::end() {
     _running = false;
 
-    // The product keeps the receiver alive for its lifetime. Cleanup here is
-    // best-effort because spi_slave_transmit() may be waiting for the master.
     if (_task != nullptr && xTaskGetCurrentTaskHandle() != _task) {
         vTaskDelay(pdMS_TO_TICKS(10));
         _task = nullptr;
@@ -109,7 +91,6 @@ void SpiVideoReceiver::end() {
             buffer = nullptr;
         }
     }
-
     _readyBuffer = -1;
 }
 
@@ -126,84 +107,65 @@ uint16_t SpiVideoReceiver::crc16Ccitt(const uint8_t* data, size_t len) {
 }
 
 bool SpiVideoReceiver::parseHeader(const uint8_t* packet, PacketHeader& header) {
-    header.magic = static_cast<uint16_t>(packet[0]) |
-                   static_cast<uint16_t>(packet[1]) << 8;
+    header.magic = static_cast<uint16_t>(packet[0]) | static_cast<uint16_t>(packet[1]) << 8;
     header.version = packet[2];
     header.type = packet[3];
-    header.frame_id = static_cast<uint16_t>(packet[4]) |
-                      static_cast<uint16_t>(packet[5]) << 8;
-    header.packet_idx = static_cast<uint16_t>(packet[6]) |
-                        static_cast<uint16_t>(packet[7]) << 8;
-    header.total_packets = static_cast<uint16_t>(packet[8]) |
-                           static_cast<uint16_t>(packet[9]) << 8;
-    header.payload_len = static_cast<uint16_t>(packet[10]) |
-                         static_cast<uint16_t>(packet[11]) << 8;
+    header.frame_id = static_cast<uint16_t>(packet[4]) | static_cast<uint16_t>(packet[5]) << 8;
+    header.packet_idx = static_cast<uint16_t>(packet[6]) | static_cast<uint16_t>(packet[7]) << 8;
+    header.total_packets = static_cast<uint16_t>(packet[8]) | static_cast<uint16_t>(packet[9]) << 8;
+    header.payload_len = static_cast<uint16_t>(packet[10]) | static_cast<uint16_t>(packet[11]) << 8;
     header.frame_size = static_cast<uint32_t>(packet[12]) |
                         static_cast<uint32_t>(packet[13]) << 8 |
                         static_cast<uint32_t>(packet[14]) << 16 |
                         static_cast<uint32_t>(packet[15]) << 24;
-    header.frame_crc16 = static_cast<uint16_t>(packet[16]) |
-                         static_cast<uint16_t>(packet[17]) << 8;
+    header.frame_crc16 = static_cast<uint16_t>(packet[16]) | static_cast<uint16_t>(packet[17]) << 8;
 
-    return header.magic == SPI_MAGIC &&
-           header.version == SPI_VERSION &&
-           header.type == SPI_TYPE_FRAME;
+    return header.magic == SPI_MAGIC && header.version == SPI_VERSION && header.type == SPI_TYPE_FRAME;
 }
 
 int SpiVideoReceiver::findReceiveBuffer() {
     int index = -1;
     portENTER_CRITICAL(&_frameMux);
-
     for (int i = 0; i < FRAME_BUFFER_COUNT; ++i) {
         if (_bufferState[i] == 0) {
             index = i;
             break;
         }
     }
-
-    // Match the stable firmware: if both buffers are occupied, sacrifice an
-    // unpublished READY frame, but never overwrite the HTTP SENDING buffer.
     if (index < 0 && _readyBuffer >= 0 && _bufferState[_readyBuffer] == 2) {
         index = _readyBuffer;
         _readyBuffer = -1;
         ++_stats.dropped_frames;
     }
-
     if (index >= 0) {
         _bufferState[index] = 1;
         _bufferSize[index] = 0;
     }
-
     portEXIT_CRITICAL(&_frameMux);
     return index;
 }
 
 void SpiVideoReceiver::publishFrame(int index, size_t size, uint16_t frameId) {
     portENTER_CRITICAL(&_frameMux);
-
     _bufferSize[index] = size;
     _bufferFrameId[index] = frameId;
     _bufferState[index] = 2;
 
     const int oldReady = _readyBuffer;
     _readyBuffer = index;
-
     if (oldReady >= 0 && oldReady != index && _bufferState[oldReady] == 2) {
         _bufferState[oldReady] = 0;
         ++_stats.dropped_frames;
     }
-
     portEXIT_CRITICAL(&_frameMux);
 }
 
 bool SpiVideoReceiver::acquireLatestFrame(FrameView& frame) {
     frame = FrameView{};
     portENTER_CRITICAL(&_frameMux);
-
     if (_readyBuffer >= 0) {
         const int index = _readyBuffer;
         _readyBuffer = -1;
-
         if (_bufferState[index] == 2) {
             _bufferState[index] = 3;
             frame.data = _frameBuffers[index];
@@ -212,7 +174,6 @@ bool SpiVideoReceiver::acquireLatestFrame(FrameView& frame) {
             frame.frame_id = _bufferFrameId[index];
         }
     }
-
     portEXIT_CRITICAL(&_frameMux);
     return frame.buffer_index >= 0;
 }
@@ -222,16 +183,21 @@ void SpiVideoReceiver::releaseFrame(FrameView& frame) {
         frame = FrameView{};
         return;
     }
-
     portENTER_CRITICAL(&_frameMux);
-    if (_bufferState[frame.buffer_index] == 3) {
-        _bufferState[frame.buffer_index] = 0;
-    }
+    if (_bufferState[frame.buffer_index] == 3) _bufferState[frame.buffer_index] = 0;
     portEXIT_CRITICAL(&_frameMux);
     frame = FrameView{};
 }
 
 SpiVideoReceiver::Stats SpiVideoReceiver::getStats() const {
+#if VIDEO_CORE_DEVELOPMENT
+    static uint32_t lastDiagPrintMs = 0;
+    const uint32_t now = millis();
+    if (now - lastDiagPrintMs >= 5000) {
+        lastDiagPrintMs = now;
+        printDiagnostics();
+    }
+#endif
     return _stats;
 }
 
@@ -256,7 +222,6 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.trans_len_32_4095),
         static_cast<unsigned long>(stats.trans_len_4096_8191),
         static_cast<unsigned long>(stats.trans_len_8192_plus));
-
     Serial.printf(
         "[SPI DIAG] bad: magic=%lu version=%lu type=%lu payload=%lu "
         "packet_range=%lu frame_meta=%lu sequence=%lu jpeg=%lu crc=%lu\n",
@@ -269,7 +234,6 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.bad_sequence),
         static_cast<unsigned long>(stats.bad_jpeg),
         static_cast<unsigned long>(stats.bad_crc));
-
     Serial.printf(
         "[SPI DIAG] state: no_buf=%lu stale_frame=%lu consecutive_bad=%lu "
         "max_consecutive_bad=%lu last_good_frame_ms=%lu\n",
@@ -300,10 +264,7 @@ void SpiVideoReceiver::receiveTask() {
         transaction.length = SPI_PACKET_SIZE * 8;
         transaction.rx_buffer = _dmaRxBuffer;
 
-        const esp_err_t result = spi_slave_transmit(
-            SPI2_HOST,
-            &transaction,
-            pdMS_TO_TICKS(1000));
+        const esp_err_t result = spi_slave_transmit(SPI2_HOST, &transaction, pdMS_TO_TICKS(1000));
         if (result != ESP_OK) {
             ++_stats.timeouts;
             continue;
@@ -314,22 +275,13 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
         ++_stats.transactions;
         _stats.last_trans_len = static_cast<uint32_t>(receivedBytesOnWire);
-        if (receivedBytesOnWire == 0) {
-            ++_stats.zero_transactions;
-        } else if (receivedBytesOnWire == SPI_PACKET_SIZE) {
-            ++_stats.full_transactions;
-        } else {
-            ++_stats.short_transactions;
-        }
-        if (receivedBytesOnWire < 32) {
-            ++_stats.trans_len_0_31;
-        } else if (receivedBytesOnWire < SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE) {
-            ++_stats.trans_len_32_4095;
-        } else if (receivedBytesOnWire < SPI_PACKET_SIZE * 2) {
-            ++_stats.trans_len_4096_8191;
-        } else {
-            ++_stats.trans_len_8192_plus;
-        }
+        if (receivedBytesOnWire == 0) ++_stats.zero_transactions;
+        else if (receivedBytesOnWire == SPI_PACKET_SIZE) ++_stats.full_transactions;
+        else ++_stats.short_transactions;
+        if (receivedBytesOnWire < 32) ++_stats.trans_len_0_31;
+        else if (receivedBytesOnWire < SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE) ++_stats.trans_len_32_4095;
+        else if (receivedBytesOnWire < SPI_PACKET_SIZE * 2) ++_stats.trans_len_4096_8191;
+        else ++_stats.trans_len_8192_plus;
 #endif
 
         if (receivedBytesOnWire < SPI_HEADER_SIZE) {
@@ -337,9 +289,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.short_transactions;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
@@ -358,28 +309,22 @@ void SpiVideoReceiver::receiveTask() {
             if (!versionOk) ++_stats.bad_version;
             if (!typeOk) ++_stats.bad_type;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 
-            // Only print the first few invalid headers so diagnostics cannot
-            // materially perturb SPI timing.
             static uint32_t invalidHeaderLogCount = 0;
             if (invalidHeaderLogCount < 8) {
                 ++invalidHeaderLogCount;
                 Serial.printf(
-                    "[SPI DIAG] invalid header #%lu len=%u "
-                    "magic=0x%04X version=%u type=%u frame=%u packet=%u/%u "
-                    "payload=%u frame_size=%lu crc=0x%04X\n",
+                    "[SPI DIAG] invalid header #%lu len=%u magic=0x%04X version=%u type=%u "
+                    "frame=%u packet=%u/%u payload=%u frame_size=%lu crc=0x%04X\n",
                     static_cast<unsigned long>(invalidHeaderLogCount),
                     static_cast<unsigned>(receivedBytesOnWire),
                     header.magic, header.version, header.type, header.frame_id,
                     header.packet_idx, header.total_packets, header.payload_len,
                     static_cast<unsigned long>(header.frame_size), header.frame_crc16);
                 Serial.print("[SPI DIAG] raw:");
-                for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) {
-                    Serial.printf(" %02X", _dmaRxBuffer[i]);
-                }
+                for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) Serial.printf(" %02X", _dmaRxBuffer[i]);
                 Serial.println();
             }
 #endif
@@ -391,9 +336,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_payload;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
@@ -403,9 +347,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_payload;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
@@ -415,9 +358,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_packet_range;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
@@ -428,23 +370,20 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
 
-        const uint32_t calculatedPackets =
-            (header.frame_size + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
+        const uint32_t calculatedPackets = (header.frame_size + SPI_PAYLOAD_SIZE - 1) / SPI_PAYLOAD_SIZE;
         if (header.total_packets != calculatedPackets) {
             ++_stats.bad_frames;
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             continue;
         }
@@ -487,9 +426,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_sequence;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             if (rxBufferIndex >= 0) {
                 portENTER_CRITICAL(&_frameMux);
@@ -505,9 +443,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
             ++_stats.bad_frame_meta;
             ++_stats.consecutive_bad_transactions;
-            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+            if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                 _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-            }
 #endif
             portENTER_CRITICAL(&_frameMux);
             _bufferState[rxBufferIndex] = 0;
@@ -516,11 +453,8 @@ void SpiVideoReceiver::receiveTask() {
             continue;
         }
 
-        memcpy(
-            _frameBuffers[rxBufferIndex] + receivedBytes,
-            _dmaRxBuffer + SPI_HEADER_SIZE,
-            header.payload_len);
-
+        memcpy(_frameBuffers[rxBufferIndex] + receivedBytes,
+               _dmaRxBuffer + SPI_HEADER_SIZE, header.payload_len);
         receivedBytes += header.payload_len;
         ++nextPacket;
 
@@ -530,9 +464,8 @@ void SpiVideoReceiver::receiveTask() {
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_frame_meta;
                 ++_stats.consecutive_bad_transactions;
-                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-                }
 #endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
@@ -543,15 +476,13 @@ void SpiVideoReceiver::receiveTask() {
 
             const uint8_t* jpeg = _frameBuffers[rxBufferIndex];
             if (jpeg[0] != 0xFF || jpeg[1] != 0xD8 ||
-                jpeg[receivedBytes - 2] != 0xFF ||
-                jpeg[receivedBytes - 1] != 0xD9) {
+                jpeg[receivedBytes - 2] != 0xFF || jpeg[receivedBytes - 1] != 0xD9) {
                 ++_stats.bad_frames;
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_jpeg;
                 ++_stats.consecutive_bad_transactions;
-                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-                }
 #endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
@@ -560,17 +491,14 @@ void SpiVideoReceiver::receiveTask() {
                 continue;
             }
 
-            const uint16_t crc = crc16Ccitt(
-                _frameBuffers[rxBufferIndex],
-                receivedBytes);
+            const uint16_t crc = crc16Ccitt(_frameBuffers[rxBufferIndex], receivedBytes);
             if (crc != expectedFrameCrc) {
                 ++_stats.bad_frames;
 #if VIDEO_CORE_DEVELOPMENT
                 ++_stats.bad_crc;
                 ++_stats.consecutive_bad_transactions;
-                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions) {
+                if (_stats.consecutive_bad_transactions > _stats.max_consecutive_bad_transactions)
                     _stats.max_consecutive_bad_transactions = _stats.consecutive_bad_transactions;
-                }
 #endif
                 portENTER_CRITICAL(&_frameMux);
                 _bufferState[rxBufferIndex] = 0;
@@ -580,12 +508,8 @@ void SpiVideoReceiver::receiveTask() {
             }
 
             if (_haveLastFrameId) {
-                const uint16_t frameIdDelta =
-                    static_cast<uint16_t>(rxFrameId - _lastFrameId);
-                if (frameIdDelta > 1) {
-                    _stats.frame_id_gaps +=
-                        static_cast<uint32_t>(frameIdDelta - 1);
-                }
+                const uint16_t frameIdDelta = static_cast<uint16_t>(rxFrameId - _lastFrameId);
+                if (frameIdDelta > 1) _stats.frame_id_gaps += static_cast<uint32_t>(frameIdDelta - 1);
             }
             _lastFrameId = rxFrameId;
             _haveLastFrameId = true;
