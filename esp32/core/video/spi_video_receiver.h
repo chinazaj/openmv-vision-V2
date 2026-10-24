@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <driver/spi_slave.h>
 
 #include "video_build_config.h"
 
@@ -17,6 +18,9 @@ public:
     static constexpr size_t SPI_PAYLOAD_SIZE = 4096;
     static constexpr size_t MAX_FRAME_SIZE = 48 * 1024;
     static constexpr size_t SPI_PACKET_SIZE = (SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE + 3) & ~static_cast<size_t>(3);
+    // Keep several DMA transactions armed so the slave does not need to
+    // re-arm the peripheral in software between consecutive CS assertions.
+    static constexpr size_t SPI_RX_TRANSACTION_BUFFER_COUNT = 4;
 
     struct FrameView {
         const uint8_t* data = nullptr;
@@ -99,7 +103,8 @@ private:
     void receiveTask();
     static void receiveTaskEntry(void* arg);
 
-    uint8_t* _dmaRxBuffer = nullptr;
+    uint8_t* _dmaRxBuffers[SPI_RX_TRANSACTION_BUFFER_COUNT] = {nullptr, nullptr, nullptr, nullptr};
+    spi_slave_transaction_t _transactions[SPI_RX_TRANSACTION_BUFFER_COUNT] = {};
     uint8_t* _frameBuffers[2] = {nullptr, nullptr};
 
     volatile uint8_t _bufferState[2] = {0, 0};
