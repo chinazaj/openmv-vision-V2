@@ -6,6 +6,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include "video_build_config.h"
+
 class SpiVideoReceiver {
 public:
     static constexpr uint16_t SPI_MAGIC = 0x55AA;
@@ -31,6 +33,33 @@ public:
         uint32_t timeouts = 0;
         uint32_t oversize = 0;
         uint32_t frame_id_gaps = 0;
+
+#if VIDEO_CORE_DEVELOPMENT
+        // Development-only SPI transaction diagnostics.
+        uint32_t transactions = 0;
+        uint32_t full_transactions = 0;
+        uint32_t short_transactions = 0;
+        uint32_t zero_transactions = 0;
+        uint32_t bad_magic = 0;
+        uint32_t bad_version = 0;
+        uint32_t bad_type = 0;
+        uint32_t bad_payload = 0;
+        uint32_t bad_packet_range = 0;
+        uint32_t bad_frame_meta = 0;
+        uint32_t bad_sequence = 0;
+        uint32_t bad_jpeg = 0;
+        uint32_t bad_crc = 0;
+        uint32_t no_receive_buffer = 0;
+        uint32_t stale_receive_frame = 0;
+        uint32_t trans_len_0_31 = 0;
+        uint32_t trans_len_32_4095 = 0;
+        uint32_t trans_len_4096_8191 = 0;
+        uint32_t trans_len_8192_plus = 0;
+        uint32_t last_trans_len = 0;
+        uint32_t last_good_frame_ms = 0;
+        uint32_t consecutive_bad_transactions = 0;
+        uint32_t max_consecutive_bad_transactions = 0;
+#endif
     };
 
     SpiVideoReceiver();
@@ -44,6 +73,10 @@ public:
 
     Stats getStats() const;
     void resetStats();
+
+#if VIDEO_CORE_DEVELOPMENT
+    void printDiagnostics() const;
+#endif
 
 private:
     struct PacketHeader {
