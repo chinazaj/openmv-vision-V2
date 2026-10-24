@@ -37,7 +37,6 @@ class VideoTransmitter:
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
 
-
     def __init__(self):
         self.spi = SPI(
             self.SPI_BUS,
@@ -56,7 +55,13 @@ class VideoTransmitter:
         self._frame_id = 0
         self._sent_frames = 0
         self._dropped_frames = 0
+        self._sent_packets = 0
+        self._packet_send_errors = 0
         self._last_frame_size = 0
+        self._last_frame_packet_count = 0
+        self._last_packet_len = 0
+        self._last_packet_send_ms = 0
+        self._max_packet_send_ms = 0
         self._last_send_ms = 0
         self._total_send_ms = 0
 
@@ -102,14 +107,22 @@ class VideoTransmitter:
         if pad_len:
             packet += b"\x00" * pad_len
 
+        self._last_packet_len = len(packet)
+        packet_start_ms = time.ticks_ms()
         self.cs.low()
         try:
             self.spi.send(packet)
         except Exception:
+            self._packet_send_errors += 1
             return False
         finally:
             self.cs.high()
 
+        packet_send_ms = time.ticks_diff(time.ticks_ms(), packet_start_ms)
+        self._sent_packets += 1
+        self._last_packet_send_ms = packet_send_ms
+        if packet_send_ms > self._max_packet_send_ms:
+            self._max_packet_send_ms = packet_send_ms
         return True
 
     def send_frame(self, img):
@@ -141,6 +154,7 @@ class VideoTransmitter:
         total_packets = (
             frame_size + self._payload_size - 1
         ) // self._payload_size
+        self._last_frame_packet_count = total_packets
 
         for packet_idx in range(total_packets):
             start = packet_idx * self._payload_size
@@ -168,7 +182,13 @@ class VideoTransmitter:
             "frame_id": self._frame_id,
             "sent_frames": self._sent_frames,
             "dropped_frames": self._dropped_frames,
+            "sent_packets": self._sent_packets,
+            "packet_send_errors": self._packet_send_errors,
             "last_frame_size": self._last_frame_size,
+            "last_frame_packet_count": self._last_frame_packet_count,
+            "last_packet_len": self._last_packet_len,
+            "last_packet_send_ms": self._last_packet_send_ms,
+            "max_packet_send_ms": self._max_packet_send_ms,
             "last_send_ms": self._last_send_ms,
             "total_send_ms": self._total_send_ms,
         }
@@ -177,5 +197,12 @@ class VideoTransmitter:
         """Reset counters without resetting the frame sequence."""
         self._sent_frames = 0
         self._dropped_frames = 0
+        self._sent_packets = 0
+        self._packet_send_errors = 0
         self._last_frame_size = 0
+        self._last_frame_packet_count = 0
+        self._last_packet_len = 0
+        self._last_packet_send_ms = 0
+        self._max_packet_send_ms = 0
+        self._last_send_ms = 0
         self._total_send_ms = 0
