@@ -43,8 +43,8 @@ class VideoTransmitter:
             self.SPI_BUS,
             SPI.MASTER,
             baudrate=self.DEFAULT_BAUDRATE,
-            polarity=1,
-            phase=0,
+            polarity=0,
+            phase=1,
         )
         self.cs = Pin(self.CS_PIN, Pin.OUT_PP)
         self.cs.high()
