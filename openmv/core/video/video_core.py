@@ -192,9 +192,9 @@ class VideoTransmitter:
             self.SPI_DIAG_REV, tx_packet_id, frame_id, packet_idx, total_packets,
             payload_len, len(packet), self._crc16_ccitt(packet), packet_head, packet_tail
         ))
-        self.cs.low()
-        cs_low_us = time.ticks_us()
         try:
+            self.cs.low()
+            cs_low_us = time.ticks_us()
             self.spi.send(packet)
             send_done_us = time.ticks_us()
             self.cs.high()
