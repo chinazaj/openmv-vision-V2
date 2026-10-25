@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <driver/spi_slave.h>
 
 #include "video_build_config.h"
@@ -125,6 +126,7 @@ private:
 
     portMUX_TYPE _frameMux = portMUX_INITIALIZER_UNLOCKED;
     TaskHandle_t _task = nullptr;
+    SemaphoreHandle_t _taskExitSemaphore = nullptr;
     volatile bool _running = false;
     bool _spiInitialized = false;
 
