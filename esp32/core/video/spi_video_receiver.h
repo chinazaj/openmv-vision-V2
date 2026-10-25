@@ -74,6 +74,16 @@ public:
         uint32_t bad_burst_frame_id = 0;
         uint32_t bad_burst_packet_idx = 0;
         uint32_t recovered_after_bad_burst = 0;
+        uint32_t last_good_frame_id = 0;
+        uint32_t last_good_packet_idx = 0;
+        uint32_t last_good_total_packets = 0;
+        uint32_t last_good_payload_len = 0;
+        uint32_t last_good_packet_len = 0;
+        uint32_t last_bad_raw_frame_id = 0;
+        uint32_t last_bad_raw_packet_idx = 0;
+        uint32_t last_bad_raw_total_packets = 0;
+        uint32_t last_bad_raw_payload_len = 0;
+        uint32_t last_bad_raw_packet_len = 0;
 #endif
     };
 
