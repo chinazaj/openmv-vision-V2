@@ -76,6 +76,8 @@ class VideoTransmitter:
         self._last_packet_total = 0
         self._last_packet_payload_len = 0
         self._last_packet_send_ms = 0
+        self._last_tx_packet_id = 0
+        self._last_spi_call_us = 0
         self._max_packet_send_ms = 0
         self._last_send_ms = 0
         self._total_send_ms = 0
@@ -128,13 +130,15 @@ class VideoTransmitter:
             )
         )
         print(
-            "[OPENMV SPI] packet: len={} frame_id={} idx={}/{} payload={} "
-            "send_ms={} max_send_ms={}".format(
+            "[OPENMV SPI] packet: tx_id={} len={} frame_id={} idx={}/{} payload={} "
+            "spi_call_us={} send_ms={} max_send_ms={}".format(
+                self._last_tx_packet_id,
                 self._last_packet_len,
                 self._last_packet_frame_id,
                 self._last_packet_idx,
                 self._last_packet_total,
                 self._last_packet_payload_len,
+                self._last_spi_call_us,
                 self._last_packet_send_ms,
                 self._max_packet_send_ms,
             )
@@ -184,34 +188,21 @@ class VideoTransmitter:
 
         tx_packet_id = self._tx_packet_id
         self._tx_packet_id = (self._tx_packet_id + 1) & 0xFFFFFFFF
-        packet_head = " ".join("{:02X}".format(value) for value in packet[:32])
-        packet_tail = " ".join("{:02X}".format(value) for value in packet[-18:])
+        # Do not print or format diagnostic payload dumps in the CS-low path.
+        # Console I/O can block for tens of milliseconds and perturb SPI cadence.
         send_start_ms = time.ticks_ms()
         send_start_us = time.ticks_us()
-        print("[SPI TX BEGIN] diag_rev={} tx_id={} frame_id={} packet_idx={}/{} payload_len={} packet_len={} packet_crc16={:04X} head=[{}] tail=[{}]".format(
-            self.SPI_DIAG_REV, tx_packet_id, frame_id, packet_idx, total_packets,
-            payload_len, len(packet), self._crc16_ccitt(packet), packet_head, packet_tail
-        ))
         try:
             self.cs.low()
-            cs_low_us = time.ticks_us()
             self.spi.send(packet)
             send_done_us = time.ticks_us()
             self.cs.high()
-            cs_high_us = time.ticks_us()
         except Exception:
             self.cs.high()
-            print("[SPI TX ERROR] diag_rev={} tx_id={} stage=spi_send cs_released=1".format(
-                self.SPI_DIAG_REV, tx_packet_id
-            ))
             self._packet_send_errors += 1
+            # Error reporting is intentionally deferred to periodic diagnostics.
             raise
-        print("[SPI TX DONE] diag_rev={} tx_id={} cs_low_offset_us={} spi_call_us={} cs_high_offset_us={} api_result=OK".format(
-            self.SPI_DIAG_REV, tx_packet_id,
-            time.ticks_diff(cs_low_us, send_start_us),
-            time.ticks_diff(send_done_us, cs_low_us),
-            time.ticks_diff(cs_high_us, send_start_us)
-        ))
+        spi_call_us = time.ticks_diff(send_done_us, send_start_us)
         send_ms = time.ticks_diff(time.ticks_ms(), send_start_ms)
 
         self._sent_packets += 1
@@ -221,6 +212,8 @@ class VideoTransmitter:
         self._last_packet_total = total_packets
         self._last_packet_payload_len = payload_len
         self._last_packet_send_ms = send_ms
+        self._last_tx_packet_id = tx_packet_id
+        self._last_spi_call_us = spi_call_us
         if send_ms > self._max_packet_send_ms:
             self._max_packet_send_ms = send_ms
 
