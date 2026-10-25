@@ -60,6 +60,10 @@ class VideoTransmitter:
         self._last_frame_size = 0
         self._last_frame_packet_count = 0
         self._last_packet_len = 0
+        self._last_packet_frame_id = 0
+        self._last_packet_idx = 0
+        self._last_packet_total = 0
+        self._last_packet_payload_len = 0
         self._last_packet_send_ms = 0
         self._max_packet_send_ms = 0
         self._last_send_ms = 0
@@ -108,6 +112,10 @@ class VideoTransmitter:
             packet += b"\x00" * pad_len
 
         self._last_packet_len = len(packet)
+        self._last_packet_frame_id = frame_id
+        self._last_packet_idx = packet_idx
+        self._last_packet_total = total_packets
+        self._last_packet_payload_len = payload_len
         packet_start_ms = time.ticks_ms()
         self.cs.low()
         try:
@@ -187,6 +195,10 @@ class VideoTransmitter:
             "last_frame_size": self._last_frame_size,
             "last_frame_packet_count": self._last_frame_packet_count,
             "last_packet_len": self._last_packet_len,
+            "last_packet_frame_id": self._last_packet_frame_id,
+            "last_packet_idx": self._last_packet_idx,
+            "last_packet_total": self._last_packet_total,
+            "last_packet_payload_len": self._last_packet_payload_len,
             "last_packet_send_ms": self._last_packet_send_ms,
             "max_packet_send_ms": self._max_packet_send_ms,
             "last_send_ms": self._last_send_ms,
@@ -202,6 +214,10 @@ class VideoTransmitter:
         self._last_frame_size = 0
         self._last_frame_packet_count = 0
         self._last_packet_len = 0
+        self._last_packet_frame_id = 0
+        self._last_packet_idx = 0
+        self._last_packet_total = 0
+        self._last_packet_payload_len = 0
         self._last_packet_send_ms = 0
         self._max_packet_send_ms = 0
         self._last_send_ms = 0
