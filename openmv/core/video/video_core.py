@@ -43,7 +43,7 @@ class VideoTransmitter:
             self.SPI_BUS,
             SPI.MASTER,
             baudrate=self.DEFAULT_BAUDRATE,
-            polarity=0,
+            polarity=1,
             phase=0,
         )
         self.cs = Pin(self.CS_PIN, Pin.OUT_PP)
@@ -150,96 +150,80 @@ class VideoTransmitter:
             frame_crc,
         )
 
-        pad_len = (4 - ((len(header) + payload_len) & 0x03)) & 0x03
-        packet = header + payload
-        if pad_len:
-            packet += b"\x00" * pad_len
+        packet = bytearray(header)
+        packet.extend(payload)
+        padding = (-len(packet)) & 3
+        if padding:
+            packet.extend(b"\x00" * padding)
 
+        send_start_ms = time.ticks_ms()
+        try:
+            self.cs.low()
+            self.spi.send(packet)
+            self.cs.high()
+        except Exception:
+            self.cs.high()
+            self._packet_send_errors += 1
+            raise
+        send_ms = time.ticks_diff(time.ticks_ms(), send_start_ms)
+
+        self._sent_packets += 1
         self._last_packet_len = len(packet)
         self._last_packet_frame_id = frame_id
         self._last_packet_idx = packet_idx
         self._last_packet_total = total_packets
         self._last_packet_payload_len = payload_len
-        packet_start_ms = time.ticks_ms()
-        self.cs.low()
+        self._last_packet_send_ms = send_ms
+        if send_ms > self._max_packet_send_ms:
+            self._max_packet_send_ms = send_ms
+
+    def send_frame(self, image):
+        """Compress and transmit one image as a sequence of SPI V2 packets."""
+        frame_start_ms = time.ticks_ms()
         try:
-            self.spi.send(packet)
-        except Exception:
-            self._packet_send_errors += 1
-            return False
-        finally:
-            self.cs.high()
-
-        packet_send_ms = time.ticks_diff(time.ticks_ms(), packet_start_ms)
-        self._sent_packets += 1
-        self._last_packet_send_ms = packet_send_ms
-        if packet_send_ms > self._max_packet_send_ms:
-            self._max_packet_send_ms = packet_send_ms
-        return True
-
-    def send_frame(self, img):
-        """Compress and transmit one image.
-
-        Returns True if every packet was accepted by the OpenMV SPI driver.
-        Returns False if compression, frame-size validation, or a packet send
-        fails. Failed frames are dropped rather than queued. True does not
-        confirm that the ESP32 has received or validated the complete frame.
-        """
-        start_ms = time.ticks_ms()
-
-        try:
-            img_c = img.compress(quality=self._jpeg_quality)
-            data = bytes(img_c)
-        except Exception:
-            self._dropped_frames += 1
-            self._print_diagnostics()
-            return False
-
-        frame_size = len(data)
-        self._last_frame_size = frame_size
-        if frame_size <= 0 or frame_size > self._max_frame_size:
-            self._dropped_frames += 1
-            self._print_diagnostics()
-            return False
-
-        frame_id = self._frame_id
-        self._frame_id = (self._frame_id + 1) & 0xFFFF
-        frame_crc = self._crc16_ccitt(data)
-        total_packets = (
-            frame_size + self._payload_size - 1
-        ) // self._payload_size
-        self._last_frame_packet_count = total_packets
-
-        for packet_idx in range(total_packets):
-            start = packet_idx * self._payload_size
-            end = min(start + self._payload_size, frame_size)
-            payload = data[start:end]
-            if not self._send_packet(
-                frame_id,
-                packet_idx,
-                total_packets,
-                frame_size,
-                frame_crc,
-                payload,
-            ):
+            jpeg = image.compress(quality=self._jpeg_quality)
+            frame_size = len(jpeg)
+            if frame_size > self._max_frame_size:
                 self._dropped_frames += 1
-                self._print_diagnostics()
                 return False
 
-        self._sent_frames += 1
-        self._last_send_ms = time.ticks_diff(time.ticks_ms(), start_ms)
-        self._total_send_ms += self._last_send_ms
-        self._print_diagnostics()
-        return True
+            frame_crc = self._crc16_ccitt(jpeg)
+            total_packets = (frame_size + self._payload_size - 1) // self._payload_size
+            frame_id = self._frame_id
+            self._frame_id = (self._frame_id + 1) & 0xFFFF
+
+            for packet_idx in range(total_packets):
+                start = packet_idx * self._payload_size
+                end = min(start + self._payload_size, frame_size)
+                self._send_packet(
+                    frame_id,
+                    packet_idx,
+                    total_packets,
+                    frame_size,
+                    frame_crc,
+                    jpeg[start:end],
+                )
+
+            self._sent_frames += 1
+            self._last_frame_size = frame_size
+            self._last_frame_packet_count = total_packets
+            self._last_send_ms = time.ticks_diff(time.ticks_ms(), frame_start_ms)
+            self._total_send_ms += self._last_send_ms
+            self._print_diagnostics()
+            return True
+        except Exception:
+            self._dropped_frames += 1
+            self._print_diagnostics()
+            return False
 
     def get_stats(self):
-        """Return a snapshot of runtime transmission counters."""
+        """Return a snapshot of current transport statistics."""
         return {
             "frame_id": self._frame_id,
             "sent_frames": self._sent_frames,
             "dropped_frames": self._dropped_frames,
             "sent_packets": self._sent_packets,
-            "packet_send_errors": self._packet_send_errors,
+            "send_errors": self._packet_send_errors,
             "last_frame_size": self._last_frame_size,
             "last_frame_packet_count": self._last_frame_packet_count,
             "last_packet_len": self._last_packet_len,
@@ -254,7 +238,8 @@ class VideoTransmitter:
         }
 
     def reset_stats(self):
-        """Reset counters without resetting the frame sequence."""
+        """Reset runtime transport statistics while preserving configuration."""
+        self._frame_id = 0
         self._sent_frames = 0
         self._dropped_frames = 0
         self._sent_packets = 0
