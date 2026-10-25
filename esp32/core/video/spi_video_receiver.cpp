@@ -67,7 +67,7 @@ bool SpiVideoReceiver::begin() {
     slvcfg.spics_io_num = SPI_CS;
     slvcfg.flags = 0;
     slvcfg.queue_size = SPI_RX_TRANSACTION_BUFFER_COUNT;
-    slvcfg.mode = 1;
+    slvcfg.mode = 2;
 
     const esp_err_t initResult = spi_slave_initialize(SPI2_HOST, &buscfg, &slvcfg, SPI_DMA_CH_AUTO);
     if (initResult != ESP_OK) {
