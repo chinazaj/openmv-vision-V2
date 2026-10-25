@@ -58,6 +58,12 @@ class VideoTransmitter:
         self._dropped_frames = 0
         self._sent_packets = 0
         self._packet_send_errors = 0
+        self._compress_errors = 0
+        self._frame_length_errors = 0
+        self._crc_errors = 0
+        self._other_frame_errors = 0
+        self._last_error_stage = "none"
+        self._last_error = "none"
         self._last_frame_size = 0
         self._last_frame_packet_count = 0
         self._last_packet_len = 0
@@ -125,6 +131,17 @@ class VideoTransmitter:
                 self._max_packet_send_ms,
             )
         )
+        print(
+            "[OPENMV SPI] errors: compress={} frame_length={} crc={} other={} "
+            "last_stage={} last_error={}".format(
+                self._compress_errors,
+                self._frame_length_errors,
+                self._crc_errors,
+                self._other_frame_errors,
+                self._last_error_stage,
+                self._last_error,
+            )
+        )
 
     def _send_packet(
         self,
@@ -180,18 +197,37 @@ class VideoTransmitter:
     def send_frame(self, image):
         """Compress and transmit one image as a sequence of SPI V2 packets."""
         frame_start_ms = time.ticks_ms()
+        stage = "compress"
         try:
             jpeg = image.compress(quality=self._jpeg_quality)
+
+            stage = "frame_length"
             frame_size = len(jpeg)
-            if frame_size > self._max_frame_size:
+            self._last_frame_size = frame_size
+            if frame_size <= 0:
+                self._frame_length_errors += 1
                 self._dropped_frames += 1
+                self._last_error_stage = "frame_length"
+                self._last_error = "compressed frame has zero length"
+                self._print_diagnostics()
+                return False
+            if frame_size > self._max_frame_size:
+                self._frame_length_errors += 1
+                self._dropped_frames += 1
+                self._last_error_stage = "frame_length"
+                self._last_error = "frame size {} exceeds limit {}".format(
+                    frame_size, self._max_frame_size
+                )
+                self._print_diagnostics()
                 return False
 
+            stage = "crc"
             frame_crc = self._crc16_ccitt(jpeg)
             total_packets = (frame_size + self._payload_size - 1) // self._payload_size
             frame_id = self._frame_id
             self._frame_id = (self._frame_id + 1) & 0xFFFF
 
+            stage = "packet_send"
             for packet_idx in range(total_packets):
                 start = packet_idx * self._payload_size
                 end = min(start + self._payload_size, frame_size)
@@ -209,10 +245,25 @@ class VideoTransmitter:
             self._last_frame_packet_count = total_packets
             self._last_send_ms = time.ticks_diff(time.ticks_ms(), frame_start_ms)
             self._total_send_ms += self._last_send_ms
+            self._last_error_stage = "none"
+            self._last_error = "none"
             self._print_diagnostics()
             return True
-        except Exception:
+        except Exception as exc:
             self._dropped_frames += 1
+            self._last_error_stage = stage
+            try:
+                self._last_error = repr(exc)
+            except Exception:
+                self._last_error = "exception text unavailable"
+            if stage == "compress":
+                self._compress_errors += 1
+            elif stage == "frame_length":
+                self._frame_length_errors += 1
+            elif stage == "crc":
+                self._crc_errors += 1
+            else:
+                self._other_frame_errors += 1
             self._print_diagnostics()
             return False
 
@@ -224,6 +275,12 @@ class VideoTransmitter:
             "dropped_frames": self._dropped_frames,
             "sent_packets": self._sent_packets,
             "send_errors": self._packet_send_errors,
+            "compress_errors": self._compress_errors,
+            "frame_length_errors": self._frame_length_errors,
+            "crc_errors": self._crc_errors,
+            "other_frame_errors": self._other_frame_errors,
+            "last_error_stage": self._last_error_stage,
+            "last_error": self._last_error,
             "last_frame_size": self._last_frame_size,
             "last_frame_packet_count": self._last_frame_packet_count,
             "last_packet_len": self._last_packet_len,
@@ -244,6 +301,12 @@ class VideoTransmitter:
         self._dropped_frames = 0
         self._sent_packets = 0
         self._packet_send_errors = 0
+        self._compress_errors = 0
+        self._frame_length_errors = 0
+        self._crc_errors = 0
+        self._other_frame_errors = 0
+        self._last_error_stage = "none"
+        self._last_error = "none"
         self._last_frame_size = 0
         self._last_frame_packet_count = 0
         self._last_packet_len = 0
