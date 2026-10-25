@@ -59,6 +59,7 @@ class VideoTransmitter:
         self._sent_packets = 0
         self._packet_send_errors = 0
         self._compress_errors = 0
+        self._convert_errors = 0
         self._frame_length_errors = 0
         self._crc_errors = 0
         self._other_frame_errors = 0
@@ -132,9 +133,10 @@ class VideoTransmitter:
             )
         )
         print(
-            "[OPENMV SPI] errors: compress={} frame_length={} crc={} other={} "
+            "[OPENMV SPI] errors: compress={} convert={} frame_length={} crc={} other={} "
             "last_stage={} last_error={}".format(
                 self._compress_errors,
+                self._convert_errors,
                 self._frame_length_errors,
                 self._crc_errors,
                 self._other_frame_errors,
@@ -199,7 +201,10 @@ class VideoTransmitter:
         frame_start_ms = time.ticks_ms()
         stage = "compress"
         try:
-            jpeg = image.compress(quality=self._jpeg_quality)
+            compressed = image.compress(quality=self._jpeg_quality)
+
+            stage = "convert"
+            jpeg = bytes(compressed)
 
             stage = "frame_length"
             frame_size = len(jpeg)
@@ -258,6 +263,8 @@ class VideoTransmitter:
                 self._last_error = "exception text unavailable"
             if stage == "compress":
                 self._compress_errors += 1
+            elif stage == "convert":
+                self._convert_errors += 1
             elif stage == "frame_length":
                 self._frame_length_errors += 1
             elif stage == "crc":
@@ -276,6 +283,7 @@ class VideoTransmitter:
             "sent_packets": self._sent_packets,
             "send_errors": self._packet_send_errors,
             "compress_errors": self._compress_errors,
+            "convert_errors": self._convert_errors,
             "frame_length_errors": self._frame_length_errors,
             "crc_errors": self._crc_errors,
             "other_frame_errors": self._other_frame_errors,
@@ -302,6 +310,7 @@ class VideoTransmitter:
         self._sent_packets = 0
         self._packet_send_errors = 0
         self._compress_errors = 0
+        self._convert_errors = 0
         self._frame_length_errors = 0
         self._crc_errors = 0
         self._other_frame_errors = 0
