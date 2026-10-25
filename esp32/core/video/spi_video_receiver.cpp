@@ -26,7 +26,20 @@ uint32_t g_lastGoodHeaderTx = 0;
 uint32_t g_lastBadHeaderTx = 0;
 uint32_t g_lastRxMicros = 0;
 uint32_t g_lastQueueMicros = 0;
+uint32_t g_lastRxTx = 0;
+uint32_t g_lastQueueTx = 0;
+int32_t g_lastRxBufferIndex = -1;
+int32_t g_lastQueueBufferIndex = -1;
+int32_t g_activeTx = -1;
+int32_t g_activeBufferIndex = -1;
 int32_t g_lastQueueResult = 0;
+
+void copyDiagnosticBytes(uint8_t* destination, size_t destinationSize,
+                         const uint8_t* source, size_t sourceSize) {
+    memset(destination, 0, destinationSize);
+    const size_t copySize = sourceSize < destinationSize ? sourceSize : destinationSize;
+    if (copySize > 0) memcpy(destination, source, copySize);
+}
 #endif
 
 esp_err_t queueTransaction(spi_slave_transaction_t* transaction, TickType_t timeout) {
@@ -34,19 +47,28 @@ esp_err_t queueTransaction(spi_slave_transaction_t* transaction, TickType_t time
 #if VIDEO_CORE_DEVELOPMENT
     g_lastQueueMicros = micros();
     g_lastQueueResult = static_cast<int32_t>(result);
+    g_lastQueueTx = g_activeTx < 0 ? 0U : static_cast<uint32_t>(g_activeTx);
+    g_lastQueueBufferIndex = g_activeBufferIndex;
 #endif
     return result;
 }
 }
 
-SpiVideoReceiver::SpiVideoReceiver() = default;
+SpiVideoReceiver::SpiVideoReceiver() {
+    _taskExitSemaphore = xSemaphoreCreateBinary();
+}
 
 SpiVideoReceiver::~SpiVideoReceiver() {
     end();
+    if (_taskExitSemaphore != nullptr) {
+        vSemaphoreDelete(_taskExitSemaphore);
+        _taskExitSemaphore = nullptr;
+    }
 }
 
 bool SpiVideoReceiver::begin() {
     if (_running) return true;
+    if (_taskExitSemaphore == nullptr) return false;
 
     for (size_t i = 0; i < SPI_RX_TRANSACTION_BUFFER_COUNT; ++i) {
         _dmaRxBuffers[i] = static_cast<uint8_t*>(heap_caps_malloc(SPI_PACKET_SIZE, MALLOC_CAP_DMA));
@@ -123,8 +145,13 @@ bool SpiVideoReceiver::begin() {
 void SpiVideoReceiver::end() {
     _running = false;
 
-    if (_task != nullptr && xTaskGetCurrentTaskHandle() != _task) {
-        vTaskDelay(pdMS_TO_TICKS(10));
+    if (_task != nullptr) {
+        // Do not free the driver or DMA buffers while receiveTask can still
+        // be blocked in get_trans_result() or processing a completed RX.
+        if (xTaskGetCurrentTaskHandle() == _task) return;
+        if (_taskExitSemaphore != nullptr) {
+            xSemaphoreTake(_taskExitSemaphore, portMAX_DELAY);
+        }
         _task = nullptr;
     }
 
@@ -288,8 +315,12 @@ void SpiVideoReceiver::printDiagnostics() const {
     lastBadHeaderTx = g_lastBadHeaderTx;
     portEXIT_CRITICAL(const_cast<portMUX_TYPE*>(&g_diagMux));
 
-    Serial.printf("[SPI DIAG] timing: last_rx_us=%lu last_queue_us=%lu rx_to_queue_us=%lu queue_result=%ld queue_depth=%u\n",
+    Serial.printf("[SPI DIAG] timing: last_rx_tx=%lu rx_buf=%ld last_rx_us=%lu last_queue_tx=%lu queue_buf=%ld last_queue_us=%lu rx_to_queue_us=%lu queue_result=%ld queue_depth=%u\n",
+                  static_cast<unsigned long>(g_lastRxTx),
+                  static_cast<long>(g_lastRxBufferIndex),
                   static_cast<unsigned long>(g_lastRxMicros),
+                  static_cast<unsigned long>(g_lastQueueTx),
+                  static_cast<long>(g_lastQueueBufferIndex),
                   static_cast<unsigned long>(g_lastQueueMicros),
                   static_cast<unsigned long>(g_lastQueueMicros - g_lastRxMicros),
                   static_cast<long>(g_lastQueueResult),
@@ -373,7 +404,11 @@ void SpiVideoReceiver::printDiagnostics() const {
 #endif
 
 void SpiVideoReceiver::receiveTaskEntry(void* arg) {
-    static_cast<SpiVideoReceiver*>(arg)->receiveTask();
+    auto* receiver = static_cast<SpiVideoReceiver*>(arg);
+    receiver->receiveTask();
+    if (receiver->_taskExitSemaphore != nullptr) {
+        xSemaphoreGive(receiver->_taskExitSemaphore);
+    }
     vTaskDelete(nullptr);
 }
 
@@ -402,11 +437,23 @@ void SpiVideoReceiver::receiveTask() {
         const size_t receivedBytesOnWire = transaction->trans_len / 8;
         uint8_t* packetBuffer = static_cast<uint8_t*>(transaction->rx_buffer);
 #if VIDEO_CORE_DEVELOPMENT
+        ++_stats.transactions;
         g_lastRxMicros = micros();
+        g_lastRxTx = _stats.transactions;
+        g_activeTx = static_cast<int32_t>(_stats.transactions);
+        g_lastRxBufferIndex = -1;
+        g_activeBufferIndex = -1;
+        for (size_t i = 0; i < SPI_RX_TRANSACTION_BUFFER_COUNT; ++i) {
+            if (transaction == &_transactions[i]) {
+                g_lastRxBufferIndex = static_cast<int32_t>(i);
+                g_activeBufferIndex = static_cast<int32_t>(i);
+                break;
+            }
+        }
 #endif
 
 #if VIDEO_CORE_DEVELOPMENT
-        ++_stats.transactions;
+
         _stats.last_trans_len = static_cast<uint32_t>(receivedBytesOnWire);
         if (receivedBytesOnWire == 0) ++_stats.zero_transactions;
         else if (receivedBytesOnWire == SPI_PACKET_SIZE) ++_stats.full_transactions;
@@ -477,7 +524,7 @@ void SpiVideoReceiver::receiveTask() {
             memcpy(g_lastBadHeader, packetBuffer, SPI_HEADER_SIZE);
             g_lastBadHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
             g_lastBadHeaderTx = _stats.transactions;
-            memcpy(g_lastBadHead, packetBuffer, DIAG_HEAD_BYTES);
+            copyDiagnosticBytes(g_lastBadHead, DIAG_HEAD_BYTES, packetBuffer, receivedBytesOnWire);
             if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
                 memcpy(g_lastBadTail, packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES, DIAG_TAIL_BYTES);
             } else {
@@ -498,7 +545,7 @@ void SpiVideoReceiver::receiveTask() {
         memcpy(g_lastGoodHeader, packetBuffer, SPI_HEADER_SIZE);
         g_lastGoodHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
         g_lastGoodHeaderTx = _stats.transactions;
-        memcpy(g_lastGoodHead, packetBuffer, DIAG_HEAD_BYTES);
+        copyDiagnosticBytes(g_lastGoodHead, DIAG_HEAD_BYTES, packetBuffer, receivedBytesOnWire);
         if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
             memcpy(g_lastGoodTail, packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES, DIAG_TAIL_BYTES);
         } else {
