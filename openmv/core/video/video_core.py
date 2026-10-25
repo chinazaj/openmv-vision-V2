@@ -37,8 +37,11 @@ class VideoTransmitter:
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
     DIAGNOSTIC_INTERVAL_MS = 5000
+    # Must match ESP32 SPI_DIAG_REV in spi_video_receiver.cpp.
+    SPI_DIAG_REV = "20261025A"
 
     def __init__(self):
+        self._tx_packet_id = 0
         self.spi = SPI(
             self.SPI_BUS,
             SPI.MASTER,
@@ -77,6 +80,10 @@ class VideoTransmitter:
         self._last_send_ms = 0
         self._total_send_ms = 0
         self._diagnostic_last_ms = time.ticks_ms()
+        print("[SPI DIAG BOOT] side=OPENMV diag_rev={} spi_bus={} spi_hz={} spi_mode=1 cpol=0 cpha=1 cs_pin={} payload_max={} header_size={} packet_align=4".format(
+            self.SPI_DIAG_REV, self.SPI_BUS, self.DEFAULT_BAUDRATE, self.CS_PIN,
+            self._payload_size, self.SPI_HEADER_SIZE
+        ))
 
     @staticmethod
     def _crc16_ccitt(data):
@@ -175,15 +182,36 @@ class VideoTransmitter:
         if padding:
             packet.extend(b"\x00" * padding)
 
+        tx_packet_id = self._tx_packet_id
+        self._tx_packet_id = (self._tx_packet_id + 1) & 0xFFFFFFFF
+        packet_head = " ".join("{:02X}".format(value) for value in packet[:32])
+        packet_tail = " ".join("{:02X}".format(value) for value in packet[-18:])
         send_start_ms = time.ticks_ms()
+        send_start_us = time.ticks_us()
+        print("[SPI TX BEGIN] diag_rev={} tx_id={} frame_id={} packet_idx={}/{} payload_len={} packet_len={} packet_crc16={:04X} head=[{}] tail=[{}]".format(
+            self.SPI_DIAG_REV, tx_packet_id, frame_id, packet_idx, total_packets,
+            payload_len, len(packet), self._crc16_ccitt(packet), packet_head, packet_tail
+        ))
+        self.cs.low()
+        cs_low_us = time.ticks_us()
         try:
-            self.cs.low()
             self.spi.send(packet)
+            send_done_us = time.ticks_us()
             self.cs.high()
+            cs_high_us = time.ticks_us()
         except Exception:
             self.cs.high()
+            print("[SPI TX ERROR] diag_rev={} tx_id={} stage=spi_send cs_released=1".format(
+                self.SPI_DIAG_REV, tx_packet_id
+            ))
             self._packet_send_errors += 1
             raise
+        print("[SPI TX DONE] diag_rev={} tx_id={} cs_low_offset_us={} spi_call_us={} cs_high_offset_us={} api_result=OK".format(
+            self.SPI_DIAG_REV, tx_packet_id,
+            time.ticks_diff(cs_low_us, send_start_us),
+            time.ticks_diff(send_done_us, cs_low_us),
+            time.ticks_diff(cs_high_us, send_start_us)
+        ))
         send_ms = time.ticks_diff(time.ticks_ms(), send_start_ms)
 
         self._sent_packets += 1
