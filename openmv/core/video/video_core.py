@@ -36,6 +36,7 @@ class VideoTransmitter:
     DEFAULT_PAYLOAD_SIZE = 4096
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
+    DIAGNOSTIC_INTERVAL_MS = 5000
 
     def __init__(self):
         self.spi = SPI(
@@ -68,6 +69,7 @@ class VideoTransmitter:
         self._max_packet_send_ms = 0
         self._last_send_ms = 0
         self._total_send_ms = 0
+        self._diagnostic_last_ms = time.ticks_ms()
 
     @staticmethod
     def _crc16_ccitt(data):
@@ -81,6 +83,48 @@ class VideoTransmitter:
                 else:
                     crc = (crc << 1) & 0xFFFF
         return crc
+
+    def _print_diagnostics(self):
+        """Print periodic SPI transport diagnostics to the OpenMV console."""
+        now_ms = time.ticks_ms()
+        if time.ticks_diff(now_ms, self._diagnostic_last_ms) < self.DIAGNOSTIC_INTERVAL_MS:
+            return
+        self._diagnostic_last_ms = now_ms
+
+        avg_send_ms = 0
+        if self._sent_frames:
+            avg_send_ms = self._total_send_ms // self._sent_frames
+
+        print(
+            "[OPENMV SPI] frame_id={} sent_frames={} dropped_frames={} "
+            "sent_packets={} send_errors={}".format(
+                self._frame_id,
+                self._sent_frames,
+                self._dropped_frames,
+                self._sent_packets,
+                self._packet_send_errors,
+            )
+        )
+        print(
+            "[OPENMV SPI] frame: size={} packets={} last_send_ms={} avg_send_ms={}".format(
+                self._last_frame_size,
+                self._last_frame_packet_count,
+                self._last_send_ms,
+                avg_send_ms,
+            )
+        )
+        print(
+            "[OPENMV SPI] packet: len={} frame_id={} idx={}/{} payload={} "
+            "send_ms={} max_send_ms={}".format(
+                self._last_packet_len,
+                self._last_packet_frame_id,
+                self._last_packet_idx,
+                self._last_packet_total,
+                self._last_packet_payload_len,
+                self._last_packet_send_ms,
+                self._max_packet_send_ms,
+            )
+        )
 
     def _send_packet(
         self,
@@ -148,12 +192,14 @@ class VideoTransmitter:
             data = bytes(img_c)
         except Exception:
             self._dropped_frames += 1
+            self._print_diagnostics()
             return False
 
         frame_size = len(data)
         self._last_frame_size = frame_size
         if frame_size <= 0 or frame_size > self._max_frame_size:
             self._dropped_frames += 1
+            self._print_diagnostics()
             return False
 
         frame_id = self._frame_id
@@ -177,11 +223,13 @@ class VideoTransmitter:
                 payload,
             ):
                 self._dropped_frames += 1
+                self._print_diagnostics()
                 return False
 
         self._sent_frames += 1
         self._last_send_ms = time.ticks_diff(time.ticks_ms(), start_ms)
         self._total_send_ms += self._last_send_ms
+        self._print_diagnostics()
         return True
 
     def get_stats(self):
@@ -222,3 +270,4 @@ class VideoTransmitter:
         self._max_packet_send_ms = 0
         self._last_send_ms = 0
         self._total_send_ms = 0
+        self._diagnostic_last_ms = time.ticks_ms()
