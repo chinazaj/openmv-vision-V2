@@ -32,7 +32,7 @@ class VideoTransmitter:
     SPI_HEADER_SIZE = ustruct.calcsize(SPI_HEADER_FMT)
 
     # Internal V1 defaults. They are deliberately not constructor parameters.
-    DEFAULT_BAUDRATE = 3000000
+    DEFAULT_BAUDRATE = 2000000
     DEFAULT_PAYLOAD_SIZE = 4096
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
@@ -43,8 +43,8 @@ class VideoTransmitter:
             self.SPI_BUS,
             SPI.MASTER,
             baudrate=self.DEFAULT_BAUDRATE,
-            polarity=0,
-            phase=1,
+            polarity=1,
+            phase=0,
         )
         self.cs = Pin(self.CS_PIN, Pin.OUT_PP)
         self.cs.high()
