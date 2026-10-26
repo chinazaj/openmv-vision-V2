@@ -124,7 +124,7 @@ bool SpiVideoReceiver::begin() {
     }
 
 #if VIDEO_CORE_DEVELOPMENT
-    Serial.printf("[SPI DIAG BOOT] side=ESP32 diag_rev=20261025B spi_host=SPI2 mode=1 cpol=0 cpha=1 sclk=%d mosi=%d miso=%d cs=%d master_clock_hz=not_reported_by_slave_driver payload_max=%u header_size=%u packet_size=%u dma_queue_depth=%u\n",
+    Serial.printf("[SPI DIAG BOOT] side=ESP32 diag_rev=20261026A spi_host=SPI2 mode=1 cpol=0 cpha=1 sclk=%d mosi=%d miso=%d cs=%d master_clock_hz=not_reported_by_slave_driver payload_max=%u header_size=%u packet_size=%u dma_queue_depth=%u\n",
                   SPI_SCK, SPI_MOSI, SPI_MISO, SPI_CS,
                   static_cast<unsigned>(SPI_PAYLOAD_SIZE),
                   static_cast<unsigned>(SPI_HEADER_SIZE),
