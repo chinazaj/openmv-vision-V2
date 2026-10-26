@@ -373,7 +373,7 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.max_consecutive_bad_transactions),
         static_cast<unsigned long>(stats.last_good_frame_ms));
 
-    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\\n",
+    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\n",
                   static_cast<unsigned long>(stats.test_packets_ok),
                   static_cast<unsigned long>(stats.test_packets_bad),
                   static_cast<unsigned long>(stats.test_crc_errors),
