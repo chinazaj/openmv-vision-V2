@@ -28,6 +28,8 @@ class VideoTransmitter:
     SPI_MAGIC = 0x55AA
     SPI_VERSION = 2
     SPI_TYPE_FRAME = 1
+    # Development-only diagnostic packet; normal video remains type 1.
+    SPI_TYPE_TEST = 2
     SPI_HEADER_FMT = "<HBBHHHHIH"
     SPI_HEADER_SIZE = ustruct.calcsize(SPI_HEADER_FMT)
 
@@ -164,6 +166,7 @@ class VideoTransmitter:
         frame_size,
         frame_crc,
         payload,
+        packet_type=None,
     ):
         """Send one SPI V2 packet in exactly one CS-low transaction."""
         payload_len = len(payload)
@@ -171,7 +174,7 @@ class VideoTransmitter:
             self.SPI_HEADER_FMT,
             self.SPI_MAGIC,
             self.SPI_VERSION,
-            self.SPI_TYPE_FRAME,
+            self.SPI_TYPE_FRAME if packet_type is None else packet_type,
             frame_id,
             packet_idx,
             total_packets,
@@ -216,6 +219,38 @@ class VideoTransmitter:
         self._last_spi_call_us = spi_call_us
         if send_ms > self._max_packet_send_ms:
             self._max_packet_send_ms = send_ms
+
+    def run_fixed_length_test(self, payload_size=256, packet_count=1000, interval_ms=0):
+        """Send deterministic SPI diagnostic packets; does not send JPEG video.
+
+        Call manually from the OpenMV REPL during development. The ESP32 must
+        run the matching development receiver build. Each transaction is a
+        valid V2 header with type=SPI_TYPE_TEST and a deterministic payload.
+        """
+        if payload_size < 1 or payload_size > self._payload_size:
+            raise ValueError("payload_size must be between 1 and {}".format(self._payload_size))
+        if packet_count < 1:
+            raise ValueError("packet_count must be positive")
+        sent = 0
+        start_ms = time.ticks_ms()
+        for test_id in range(packet_count):
+            payload = bytearray(payload_size)
+            seed = test_id & 0xFFFF
+            for i in range(payload_size):
+                payload[i] = (i * 37 + seed * 13 + 0x5A) & 0xFF
+            payload_crc = self._crc16_ccitt(payload)
+            self._send_packet(
+                seed, 0, 1, payload_size, payload_crc, payload,
+                packet_type=self.SPI_TYPE_TEST,
+            )
+            sent += 1
+            if interval_ms > 0:
+                time.sleep_ms(interval_ms)
+        elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ms)
+        print("[OPENMV SPI TEST] payload={} packets={} elapsed_ms={} packet_errors={}".format(
+            payload_size, sent, elapsed_ms, self._packet_send_errors
+        ))
+        return sent
 
     def send_frame(self, image):
         """Compress and transmit one image as a sequence of SPI V2 packets."""
