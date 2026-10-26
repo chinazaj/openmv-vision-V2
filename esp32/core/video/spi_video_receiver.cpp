@@ -40,6 +40,25 @@ void copyDiagnosticBytes(uint8_t* destination, size_t destinationSize,
     const size_t copySize = sourceSize < destinationSize ? sourceSize : destinationSize;
     if (copySize > 0) memcpy(destination, source, copySize);
 }
+
+// Recover bytes from a stream shifted right by one bit.
+// AA 55 02 02 becomes D5 2A 81 01 when the incoming fill bit is 1.
+uint8_t decodeOneBitRightShift(const uint8_t* data, size_t index) {
+    return static_cast<uint8_t>((data[index] << 1) | (data[index + 1] >> 7));
+}
+
+uint16_t crc16CcittOneBitRightShifted(const uint8_t* data, size_t offset, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t n = 0; n < len; ++n) {
+        crc ^= static_cast<uint16_t>(decodeOneBitRightShift(data, offset + n)) << 8;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 0x8000)
+                ? static_cast<uint16_t>((crc << 1) ^ 0x1021)
+                : static_cast<uint16_t>(crc << 1);
+        }
+    }
+    return crc;
+}
 #endif
 
 esp_err_t queueTransaction(spi_slave_transaction_t* transaction, TickType_t timeout) {
@@ -373,11 +392,17 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.max_consecutive_bad_transactions),
         static_cast<unsigned long>(stats.last_good_frame_ms));
 
-    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\n",
+    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\\n",
                   static_cast<unsigned long>(stats.test_packets_ok),
                   static_cast<unsigned long>(stats.test_packets_bad),
                   static_cast<unsigned long>(stats.test_crc_errors),
                   static_cast<unsigned long>(stats.test_pattern_errors));
+    Serial.printf("[SPI TEST ALIGN] shift1_candidates=%lu shift1_ok=%lu shift1_bad=%lu shift1_crc_errors=%lu shift1_pattern_errors=%lu\\n",
+                  static_cast<unsigned long>(stats.test_bitshift1_candidates),
+                  static_cast<unsigned long>(stats.test_bitshift1_ok),
+                  static_cast<unsigned long>(stats.test_bitshift1_bad),
+                  static_cast<unsigned long>(stats.test_bitshift1_crc_errors),
+                  static_cast<unsigned long>(stats.test_bitshift1_pattern_errors));
 
     Serial.printf("[SPI DIAG] raw_good tx=%lu len=%lu:",
                   static_cast<unsigned long>(lastGoodHeaderTx),
@@ -554,6 +579,80 @@ void SpiVideoReceiver::receiveTask() {
             const esp_err_t queueResult = queueTransaction(transaction, pdMS_TO_TICKS(1000));
             if (queueResult != ESP_OK) ++_stats.queue_errors;
             continue;
+        }
+
+        // Diagnostic recovery only: identify a type-2 test packet whose bytes
+        // were sampled with a one-bit right shift. Never route it as video.
+        if (receivedBytesOnWire > SPI_HEADER_SIZE) {
+            uint8_t shiftedHeaderBytes[SPI_HEADER_SIZE] = {};
+            for (size_t i = 0; i < SPI_HEADER_SIZE; ++i) {
+                shiftedHeaderBytes[i] = decodeOneBitRightShift(packetBuffer, i);
+            }
+            PacketHeader shiftedHeader{};
+            parseHeader(shiftedHeaderBytes, shiftedHeader);
+            if (shiftedHeader.magic == SPI_MAGIC &&
+                shiftedHeader.version == SPI_VERSION &&
+                shiftedHeader.type == SPI_TYPE_TEST) {
+                ++_stats.test_bitshift1_candidates;
+                bool shiftedTestOk = true;
+                const size_t shiftedExpectedWireBytes =
+                    (SPI_HEADER_SIZE + shiftedHeader.payload_len + 3) &
+                    ~static_cast<size_t>(3);
+
+                if (shiftedHeader.payload_len == 0 ||
+                    shiftedHeader.payload_len > SPI_PAYLOAD_SIZE ||
+                    shiftedHeader.packet_idx != 0 ||
+                    shiftedHeader.total_packets != 1 ||
+                    shiftedHeader.frame_size != shiftedHeader.payload_len ||
+                    receivedBytesOnWire != shiftedExpectedWireBytes ||
+                    SPI_HEADER_SIZE + shiftedHeader.payload_len >= receivedBytesOnWire) {
+                    shiftedTestOk = false;
+                } else {
+                    const uint16_t shiftedCrc = crc16CcittOneBitRightShifted(
+                        packetBuffer, SPI_HEADER_SIZE, shiftedHeader.payload_len);
+                    if (shiftedCrc != shiftedHeader.frame_crc16) {
+                        ++_stats.test_bitshift1_crc_errors;
+                        shiftedTestOk = false;
+                    }
+                    for (size_t i = 0; i < shiftedHeader.payload_len; ++i) {
+                        const uint8_t actual = decodeOneBitRightShift(
+                            packetBuffer, SPI_HEADER_SIZE + i);
+                        const uint8_t expected = static_cast<uint8_t>(
+                            (i * 37U +
+                             static_cast<uint32_t>(shiftedHeader.frame_id) * 13U +
+                             0x5AU) & 0xFFU);
+                        if (actual != expected) {
+                            ++_stats.test_bitshift1_pattern_errors;
+                            shiftedTestOk = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (shiftedTestOk) ++_stats.test_bitshift1_ok;
+                else ++_stats.test_bitshift1_bad;
+
+                portENTER_CRITICAL(&g_diagMux);
+                memcpy(g_lastBadHeader, packetBuffer, SPI_HEADER_SIZE);
+                g_lastBadHeaderLen = static_cast<uint32_t>(receivedBytesOnWire);
+                g_lastBadHeaderTx = _stats.transactions;
+                copyDiagnosticBytes(g_lastBadHead, DIAG_HEAD_BYTES,
+                                    packetBuffer, receivedBytesOnWire);
+                if (receivedBytesOnWire >= DIAG_TAIL_BYTES) {
+                    memcpy(g_lastBadTail,
+                           packetBuffer + receivedBytesOnWire - DIAG_TAIL_BYTES,
+                           DIAG_TAIL_BYTES);
+                } else {
+                    memset(g_lastBadTail, 0, DIAG_TAIL_BYTES);
+                    memcpy(g_lastBadTail, packetBuffer, receivedBytesOnWire);
+                }
+                portEXIT_CRITICAL(&g_diagMux);
+
+                const esp_err_t queueResult = queueTransaction(
+                    transaction, pdMS_TO_TICKS(1000));
+                if (queueResult != ESP_OK) ++_stats.queue_errors;
+                continue;
+            }
         }
 #endif
 
