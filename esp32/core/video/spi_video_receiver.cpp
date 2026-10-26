@@ -392,12 +392,12 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.max_consecutive_bad_transactions),
         static_cast<unsigned long>(stats.last_good_frame_ms));
 
-    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\\n",
+    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\n",
                   static_cast<unsigned long>(stats.test_packets_ok),
                   static_cast<unsigned long>(stats.test_packets_bad),
                   static_cast<unsigned long>(stats.test_crc_errors),
                   static_cast<unsigned long>(stats.test_pattern_errors));
-    Serial.printf("[SPI TEST ALIGN] shift1_candidates=%lu shift1_ok=%lu shift1_bad=%lu shift1_crc_errors=%lu shift1_pattern_errors=%lu\\n",
+    Serial.printf("[SPI TEST ALIGN] shift1_candidates=%lu shift1_ok=%lu shift1_bad=%lu shift1_crc_errors=%lu shift1_pattern_errors=%lu\n",
                   static_cast<unsigned long>(stats.test_bitshift1_candidates),
                   static_cast<unsigned long>(stats.test_bitshift1_ok),
                   static_cast<unsigned long>(stats.test_bitshift1_bad),
