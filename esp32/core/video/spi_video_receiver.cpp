@@ -373,6 +373,12 @@ void SpiVideoReceiver::printDiagnostics() const {
         static_cast<unsigned long>(stats.max_consecutive_bad_transactions),
         static_cast<unsigned long>(stats.last_good_frame_ms));
 
+    Serial.printf("[SPI TEST] ok=%lu bad=%lu crc_errors=%lu pattern_errors=%lu\\n",
+                  static_cast<unsigned long>(stats.test_packets_ok),
+                  static_cast<unsigned long>(stats.test_packets_bad),
+                  static_cast<unsigned long>(stats.test_crc_errors),
+                  static_cast<unsigned long>(stats.test_pattern_errors));
+
     Serial.printf("[SPI DIAG] raw_good tx=%lu len=%lu:",
                   static_cast<unsigned long>(lastGoodHeaderTx),
                   static_cast<unsigned long>(lastGoodHeaderLen));
@@ -503,6 +509,53 @@ void SpiVideoReceiver::receiveTask() {
         const bool magicOk = header.magic == SPI_MAGIC;
         const bool versionOk = header.version == SPI_VERSION;
         const bool typeOk = header.type == SPI_TYPE_FRAME;
+
+#if VIDEO_CORE_DEVELOPMENT
+        // Isolated fixed-length transport test. Test packets are validated
+        // here and never enter JPEG assembly or get published as video frames.
+        if (magicOk && versionOk && header.type == SPI_TYPE_TEST) {
+            bool testOk = true;
+            const size_t expectedWireBytes =
+                (SPI_HEADER_SIZE + header.payload_len + 3) & ~static_cast<size_t>(3);
+            if (header.payload_len == 0 ||
+                header.payload_len > SPI_PAYLOAD_SIZE ||
+                header.packet_idx != 0 ||
+                header.total_packets != 1 ||
+                header.frame_size != header.payload_len ||
+                receivedBytesOnWire != expectedWireBytes ||
+                SPI_HEADER_SIZE + header.payload_len > receivedBytesOnWire) {
+                testOk = false;
+            } else {
+                const uint8_t* payload = packetBuffer + SPI_HEADER_SIZE;
+                if (crc16Ccitt(payload, header.payload_len) != header.frame_crc16) {
+                    ++_stats.test_crc_errors;
+                    testOk = false;
+                }
+                for (size_t i = 0; i < header.payload_len; ++i) {
+                    const uint8_t expected = static_cast<uint8_t>(
+                        (i * 37U + static_cast<uint32_t>(header.frame_id) * 13U + 0x5AU) & 0xFFU);
+                    if (payload[i] != expected) {
+                        ++_stats.test_pattern_errors;
+                        testOk = false;
+                        break;
+                    }
+                }
+                for (size_t i = SPI_HEADER_SIZE + header.payload_len;
+                     i < receivedBytesOnWire; ++i) {
+                    if (packetBuffer[i] != 0) {
+                        ++_stats.test_pattern_errors;
+                        testOk = false;
+                        break;
+                    }
+                }
+            }
+            if (testOk) ++_stats.test_packets_ok;
+            else ++_stats.test_packets_bad;
+            const esp_err_t queueResult = queueTransaction(transaction, pdMS_TO_TICKS(1000));
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+            continue;
+        }
+#endif
 
         if (!magicOk || !versionOk || !typeOk) {
             ++_stats.bad_frames;
