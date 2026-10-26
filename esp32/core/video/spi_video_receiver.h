@@ -80,6 +80,12 @@ public:
         uint32_t test_packets_bad = 0;
         uint32_t test_crc_errors = 0;
         uint32_t test_pattern_errors = 0;
+        // Detect test packets whose complete RX bitstream is shifted by one bit.
+        uint32_t test_bitshift1_candidates = 0;
+        uint32_t test_bitshift1_ok = 0;
+        uint32_t test_bitshift1_bad = 0;
+        uint32_t test_bitshift1_crc_errors = 0;
+        uint32_t test_bitshift1_pattern_errors = 0;
 #endif
     };
 
