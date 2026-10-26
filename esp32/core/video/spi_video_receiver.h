@@ -15,6 +15,7 @@ public:
     static constexpr uint16_t SPI_MAGIC = 0x55AA;
     static constexpr uint8_t SPI_VERSION = 2;
     static constexpr uint8_t SPI_TYPE_FRAME = 1;
+    static constexpr uint8_t SPI_TYPE_TEST = 2; // Development diagnostic only.
     static constexpr size_t SPI_HEADER_SIZE = 18;
     static constexpr size_t SPI_PAYLOAD_SIZE = 4000;
     static constexpr size_t MAX_FRAME_SIZE = 48 * 1024;
@@ -75,6 +76,10 @@ public:
         uint32_t bad_burst_frame_id = 0;
         uint32_t bad_burst_packet_idx = 0;
         uint32_t recovered_after_bad_burst = 0;
+        uint32_t test_packets_ok = 0;
+        uint32_t test_packets_bad = 0;
+        uint32_t test_crc_errors = 0;
+        uint32_t test_pattern_errors = 0;
 #endif
     };
 
