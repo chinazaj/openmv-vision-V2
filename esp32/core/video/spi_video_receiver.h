@@ -16,7 +16,7 @@ public:
     static constexpr uint8_t SPI_VERSION = 2;
     static constexpr uint8_t SPI_TYPE_FRAME = 1;
     static constexpr size_t SPI_HEADER_SIZE = 18;
-    static constexpr size_t SPI_PAYLOAD_SIZE = 4096;
+    static constexpr size_t SPI_PAYLOAD_SIZE = 4000;
     static constexpr size_t MAX_FRAME_SIZE = 48 * 1024;
     static constexpr size_t SPI_PACKET_SIZE = (SPI_HEADER_SIZE + SPI_PAYLOAD_SIZE + 3) & ~static_cast<size_t>(3);
     // Keep several DMA transactions armed so the slave does not need to
