@@ -33,12 +33,12 @@ class VideoTransmitter:
 
     # Internal V1 defaults. They are deliberately not constructor parameters.
     DEFAULT_BAUDRATE = 2000000
-    DEFAULT_PAYLOAD_SIZE = 4096
+    DEFAULT_PAYLOAD_SIZE = 4000
     DEFAULT_MAX_FRAME_SIZE = 48 * 1024
     DEFAULT_JPEG_QUALITY = 40
     DIAGNOSTIC_INTERVAL_MS = 5000
     # Must match ESP32 SPI_DIAG_REV in spi_video_receiver.cpp.
-    SPI_DIAG_REV = "20261025A"
+    SPI_DIAG_REV = "20261026A"
 
     def __init__(self):
         self._tx_packet_id = 0
