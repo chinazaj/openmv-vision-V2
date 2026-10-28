@@ -197,6 +197,10 @@ class VideoTransmitter:
         send_start_us = time.ticks_us()
         try:
             self.cs.low()
+            # Diagnostic timing experiment: allow the slave a little CS setup
+            # time before the first SCLK edge. Compare bit-shift rates with
+            # and without this delay; this is not yet a confirmed fix.
+            time.sleep_us(3)
             self.spi.send(packet)
             send_done_us = time.ticks_us()
             self.cs.high()
