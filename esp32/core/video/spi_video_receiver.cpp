@@ -460,8 +460,20 @@ void SpiVideoReceiver::receiveTask() {
             ++_stats.timeouts;
             continue;
         }
-        if (transaction == nullptr || transaction->rx_buffer == nullptr) {
+        if (transaction == nullptr) {
+            // No transaction object is available to return to the driver's queue.
             ++_stats.bad_frames;
+            continue;
+        }
+        if (transaction->rx_buffer == nullptr) {
+            // The transaction object was dequeued, so return it even when its
+            // buffer pointer is invalid; otherwise the armed RX queue shrinks.
+            ++_stats.bad_frames;
+            const esp_err_t queueResult = queueTransaction(
+                transaction, pdMS_TO_TICKS(1000));
+#if VIDEO_CORE_DEVELOPMENT
+            if (queueResult != ESP_OK) ++_stats.queue_errors;
+#endif
             continue;
         }
 
