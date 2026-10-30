@@ -55,7 +55,8 @@ static const char HTML_ROOT_RELEASE_BODY[] = R"HTML(
 <p>OpenMV 视频状态：<b id='video_state'>{{VIDEO_STATE}}</b></p>
 <p>Wi-Fi 信号：<b id='wifi_rssi'>--</b></p>
 <p>运行时间：<b id='uptime'>--</b></p>
-<a id='watch_btn' href='http://openmv-wifi.local:81/stream' target='_blank' rel='noopener noreferrer' class='btn btn-green'>观看实时视频</a>
+<div class='video-box'><img id='video_preview' src='{{STREAM_URL}}' alt='等待视频流...' /><div class='hint'>如果画面未显示，可点击下方按钮在新窗口打开视频流。</div></div>
+<a id='watch_btn' href='{{STREAM_URL}}' target='_blank' rel='noopener noreferrer' class='btn btn-green'>在新窗口打开视频</a>
 </div>
 <div class='card'>
 <h2>视频接收状态</h2>
@@ -88,7 +89,7 @@ static const char HTML_ROOT_RELEASE_BODY[] = R"HTML(
 .stat{background:#f2f2f7;border-radius:9px;padding:12px;min-width:0}
 .stat span{display:block;font-size:12px;color:#666;margin-bottom:6px}
 .stat b{font-size:20px;overflow-wrap:anywhere}
-.hint{font-size:12px;color:#8e8e93}
+.hint{font-size:12px;color:#8e8e93}.video-box{margin-top:12px}.video-box img{display:block;width:100%;min-height:160px;max-height:55vh;object-fit:contain;background:#111;border-radius:8px}
 </style>
 <script>
 let previousRxFrames=null,previousRxAt=0;
