@@ -74,7 +74,12 @@
 | 2026-10-23 | ESP32 Video Core | 新增 SPI V2 接收、双缓冲、CRC、最新帧优先的 `SpiVideoReceiver` | `MIGRATING` |
 | 2026-10-23 | ESP32 Video Product | 新增最小 Video Terminal 联调固件，提供 MJPEG `/stream` 与 `/api/status` | `MIGRATING` |
 
-
 ## OpenMV Vision 迁移记录
 
-| 日期 | 组件 | 变更 | 状态 |\n|---|---|---|---|\n| 2026-10-30 | OpenMV | 创建 `feature/openmv-vision`，基于 `feature/esp32-core-video` 当前头部 | `MIGRATING` |\n| 2026-10-30 | OpenMV UART Core | 抽取 UART3/115200/8N1/LF JSONL 接收、重同步、超长行丢弃、JSON 分发及响应发送 | `MIGRATING` |\n| 2026-10-30 | OpenMV Config Core | 抽取 config.json 默认值、schema v1→v2 兼容、校验、逐项读写和写后回读 | `MIGRATING` |\n| 2026-10-30 | OpenMV Features | 抽取 QR/颜色/形状识别与非阻塞双舵机动作 | `MIGRATING` |\n| 2026-10-30 | OpenMV Vision Product | 新增产品入口，组合 UART/Config/Servo/Vision 与现有 Video Core | `MIGRATING` |\n
+| 日期 | 组件 | 变更 | 状态 |
+|---|---|---|---|
+| 2026-10-30 | OpenMV | 创建 `feature/openmv-vision`，基于 `feature/esp32-core-video` 当前头部 | `MIGRATING` |
+| 2026-10-30 | OpenMV UART Core | 抽取 UART3/115200/8N1/LF JSONL 接收、重同步、超长行丢弃、JSON 分发及响应发送 | `MIGRATING` |
+| 2026-10-30 | OpenMV Config Core | 抽取 config.json 默认值、schema v1→v2 兼容、校验、逐项读写和写后回读 | `MIGRATING` |
+| 2026-10-30 | OpenMV Features | 抽取 QR/颜色/形状识别与非阻塞双舵机动作 | `MIGRATING` |
+| 2026-10-30 | OpenMV Vision Product | 新增产品入口，组合 UART/Config/Servo/Vision 与现有 Video Core | `MIGRATING` |
