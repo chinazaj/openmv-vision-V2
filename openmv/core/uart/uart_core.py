@@ -22,11 +22,15 @@ class UARTJsonlTransport:
         self.discarding_oversize_line = False
         self.waiting_for_json_start = True
         self.debug = debug
-        print("[UART] Initialized: UART%d, baud=%d, 8N1, rxbuf=%d" %
-              (uart_bus, baudrate, rxbuf))
-        print("[UART] Expected wiring: OpenMV TX -> C3 RX; OpenMV RX <- C3 TX; GND common")
+        self._log("[UART] Initialized: UART%d, baud=%d, 8N1, rxbuf=%d" %
+                  (uart_bus, baudrate, rxbuf))
+        self._log("[UART] Expected wiring: OpenMV TX -> C3 RX; OpenMV RX <- C3 TX; GND common")
 
-    def _log(self, message):\n        if self.debug:\n            print(message)\n\n    def poll(self, command_handler):
+    def _log(self, message):
+        if self.debug:
+            print(message)
+
+    def poll(self, command_handler):
         """Drain available UART data and dispatch each complete JSON object.
 
         command_handler receives one decoded dict. Any exception is converted
@@ -61,7 +65,7 @@ class UARTJsonlTransport:
                         raw_line = bytes(self.rx_buffer)
                         self.rx_buffer = bytearray()
                         self.waiting_for_json_start = True
-                        if raw_line.endswith(b"\r"):
+                        if raw_line.endswith(b"\\r"):
                             raw_line = raw_line[:-1]
                         if raw_line:
                             self._handle_line(raw_line, command_handler)
@@ -81,13 +85,12 @@ class UARTJsonlTransport:
             command = ujson.loads(line)
             if not isinstance(command, dict):
                 raise ValueError("JSON root must be an object")
-            if self.debug:
-                print("[UART RX LINE] bytes=%d command=%r" %
+            self._log("[UART RX LINE] bytes=%d command=%r" %
                       (len(raw_line), command.get("cmd")))
             command_handler(command)
         except Exception as e:
-            print("[UART PARSE ERROR] bytes=%d prefix=%r error=%s" %
-                  (len(raw_line), raw_line[:160], e))
+            self._log("[UART PARSE ERROR] bytes=%d prefix=%r error=%s" %
+                      (len(raw_line), raw_line[:160], e))
             self.send_json({
                 "type": "resp",
                 "status": "error",
@@ -103,10 +106,8 @@ class UARTJsonlTransport:
     def send_json(self, data):
         """Serialize one response/event and terminate it with LF."""
         try:
-            payload = ujson.dumps(data) + "\n"
+            payload = ujson.dumps(data) + "\\n"
             self.uart.write(payload)
-            if self.debug:
-                print("[UART TX] %s" % payload.strip())
+            self._log("[UART TX] %s" % payload.strip())
         except Exception as e:
-            if self.debug:
-                print("[UART TX ERROR] %s" % e)
+            self._log("[UART TX ERROR] %s" % e)
