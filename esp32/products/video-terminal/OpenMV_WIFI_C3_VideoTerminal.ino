@@ -132,11 +132,13 @@ void handleRoot() {
     const String networkMode = connected ? "STA 客户端" : "AP 热点";
     const String ipAddress = connected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
     const String videoState = videoActive ? "传输中" : "已停止";
+    const String streamUrl = "http://" + ipAddress + ":81/stream";
 
     String html = String(HTML_HEAD) + HTML_ROOT_RELEASE_BODY;
     html.replace("{{NETWORK_MODE}}", networkMode);
     html.replace("{{IP_ADDRESS}}", ipAddress);
     html.replace("{{VIDEO_STATE}}", videoState);
+    html.replace("{{STREAM_URL}}", streamUrl);
     html += "</body></html>";
 
     server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
