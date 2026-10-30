@@ -45,7 +45,7 @@ def main():
     sensor.skip_frames(time=2000)
 
     cfg_mgr = ConfigManager(debug=(BUILD_PROFILE == "DEV"))
-    VIDEO_ENABLED = bool(cfg_mgr.config.get("video", {}).get("enabled", False))
+    VIDEO_ENABLED = cfg_mgr.video_enabled
 
     servos = DualServoController()
     detector = VisionDetector()
