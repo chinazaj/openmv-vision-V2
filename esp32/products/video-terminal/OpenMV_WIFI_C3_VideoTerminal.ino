@@ -338,7 +338,7 @@ void setupWebServer() {
     server.on("/api/reset-stats", HTTP_POST, []() {
         videoReceiver.resetStats();
         server.sendHeader("Cache-Control", "no-store");
-        server.send(200, "application/json", "{\\"ok\\":true}");
+        server.send(200, "application/json", "{\"ok\":true}");
         Serial.println("[HTTP] video receive statistics reset from root page");
     });
     server.on("/frame.jpg", HTTP_GET, handleFrame);
