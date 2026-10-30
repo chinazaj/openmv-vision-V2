@@ -67,7 +67,7 @@ class ConfigManager:
                                                     "video_off_code": CONTROL_VIDEO_OFF_CODE})
             self.validate(self.config)
         except Exception as e:
-            print("[CONFIG] Load failed; using safe defaults:", e)
+            self._log("[CONFIG] Load failed; using safe defaults:", e)
             self.save()
 
     def validate(self, candidate):
