@@ -18,6 +18,7 @@ class ConfigManager:
     def __init__(self, filename="config.json", debug=False):
         self.filename = filename
         self.debug = debug
+        self.video_enabled = False
         self.config = {
             "schema_version": 2,
             "video": {"enabled": False},
@@ -71,6 +72,7 @@ class ConfigManager:
             self.config.setdefault("control_qr", {"enabled": True, "video_on_code": CONTROL_VIDEO_ON_CODE,
                                                     "video_off_code": CONTROL_VIDEO_OFF_CODE})
             self.validate(self.config)
+            self.video_enabled = bool(self.config.get("video", {}).get("enabled", False))
         except Exception as e:
             self._log("[CONFIG] Load failed; using safe defaults:", e)
             self.save()
