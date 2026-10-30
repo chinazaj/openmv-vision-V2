@@ -65,7 +65,7 @@ class UARTJsonlTransport:
                         raw_line = bytes(self.rx_buffer)
                         self.rx_buffer = bytearray()
                         self.waiting_for_json_start = True
-                        if raw_line.endswith(b"\\r"):
+                        if raw_line.endswith(b"\r"):
                             raw_line = raw_line[:-1]
                         if raw_line:
                             self._handle_line(raw_line, command_handler)
@@ -106,7 +106,7 @@ class UARTJsonlTransport:
     def send_json(self, data):
         """Serialize one response/event and terminate it with LF."""
         try:
-            payload = ujson.dumps(data) + "\\n"
+            payload = ujson.dumps(data) + "\n"
             self.uart.write(payload)
             self._log("[UART TX] %s" % payload.strip())
         except Exception as e:
