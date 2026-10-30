@@ -52,11 +52,10 @@ static const char HTML_ROOT_RELEASE_BODY[] = R"HTML(
 <h2>ESP32-C3 视频终端</h2>
 <p>网络模式：<b id='net_mode'>{{NETWORK_MODE}}</b></p>
 <p>IP 地址：<b>{{IP_ADDRESS}}</b></p>
-<p>OpenMV 视频状态：<b id='video_state'>{{VIDEO_STATE}}</b></p>
+<p>视频状态：<b id='video_state'>{{VIDEO_STATE}}</b></p>
 <p>Wi-Fi 信号：<b id='wifi_rssi'>--</b></p>
 <p>运行时间：<b id='uptime'>--</b></p>
-<div class='video-box'><img id='video_preview' src='{{STREAM_URL}}' alt='等待视频流...' /><div class='hint'>如果画面未显示，可点击下方按钮在新窗口打开视频流。</div></div>
-<a id='watch_btn' href='{{STREAM_URL}}' target='_blank' rel='noopener noreferrer' class='btn btn-green'>在新窗口打开视频</a>
+<a id='watch_btn' href='{{STREAM_URL}}' target='_blank' rel='noopener noreferrer' class='btn btn-green'>打开实时视频</a>
 </div>
 <div class='card'>
 <h2>视频接收状态</h2>
@@ -70,7 +69,9 @@ static const char HTML_ROOT_RELEASE_BODY[] = R"HTML(
 <div class='stat'><span>超长帧</span><b id='rx_oversize_count'>--</b></div>
 <div class='stat'><span>最近一帧距今</span><b id='last_frame_age'>--</b></div>
 </div>
-<p class='hint'>数据每秒自动刷新。成功帧表示 ESP32 已完成接收、组帧和校验；丢弃帧表示最新帧优先策略主动丢弃旧帧。</p>
+<p class='hint'>成功帧表示 ESP32 已完成接收、组帧和校验；丢弃帧表示接收缓冲区不足时未能保留的帧，不等同于协议错误。</p>
+<button id='reset_stats_btn' type='button' class='btn btn-orange'>重置接收统计</button>
+<p id='reset_status' class='hint' aria-live='polite'></p>
 </div>
 <div class='card'>
 <h2>设备资源</h2>
@@ -79,17 +80,13 @@ static const char HTML_ROOT_RELEASE_BODY[] = R"HTML(
 <p>Wi-Fi 客户端数：<b id='wifi_clients'>--</b></p>
 <p id='status_updated' class='hint'>等待状态数据...</p>
 </div>
-<div class='card'>
-<h2>设备功能</h2>
-<a href='/config' class='btn btn-purple'>设备配置</a>
-<a href='/wifi' class='btn btn-purple'>Wi-Fi 配网</a>
-</div>
+<div class='card'><h2>网络</h2><a href='/wifi' class='btn btn-purple'>Wi-Fi 配网</a></div>
 <style>
 .stats-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
 .stat{background:#f2f2f7;border-radius:9px;padding:12px;min-width:0}
 .stat span{display:block;font-size:12px;color:#666;margin-bottom:6px}
 .stat b{font-size:20px;overflow-wrap:anywhere}
-.hint{font-size:12px;color:#8e8e93}.video-box{margin-top:12px}.video-box img{display:block;width:100%;min-height:160px;max-height:55vh;object-fit:contain;background:#111;border-radius:8px}
+.hint{font-size:12px;color:#8e8e93}
 </style>
 <script>
 let previousRxFrames=null,previousRxAt=0;
@@ -104,14 +101,10 @@ async function updateStatus(){
     put('video_state',s.video_active?'运行中':'已停止');
     put('wifi_rssi',s.wifi_mode==='STA'?(s.wifi_rssi+' dBm'):'AP模式');
     put('uptime',fmtDuration(s.uptime_s));
-    put('rx_ok_frames',s.rx_ok_frames);
-    put('rx_bad_frames',s.rx_bad_frames);
-    put('rx_dropped_frames',s.rx_dropped_frames);
-    put('rx_timeout_count',s.rx_timeout_count);
-    put('rx_frame_id_gap_count',s.rx_frame_id_gap_count);
-    put('rx_oversize_count',s.rx_oversize_count);
-    put('free_heap',fmtBytes(s.free_heap));
-    put('min_free_heap',fmtBytes(s.min_free_heap));
+    put('rx_ok_frames',s.rx_ok_frames);put('rx_bad_frames',s.rx_bad_frames);
+    put('rx_dropped_frames',s.rx_dropped_frames);put('rx_timeout_count',s.rx_timeout_count);
+    put('rx_frame_id_gap_count',s.rx_frame_id_gap_count);put('rx_oversize_count',s.rx_oversize_count);
+    put('free_heap',fmtBytes(s.free_heap));put('min_free_heap',fmtBytes(s.min_free_heap));
     put('wifi_clients',s.wifi_clients);
     put('last_frame_age',s.last_frame_age_ms===null?'尚未收到':(s.last_frame_age_ms+' ms'));
     const now=Date.now();
@@ -121,9 +114,19 @@ async function updateStatus(){
     }else{put('rx_fps','计算中');}
     previousRxFrames=s.rx_ok_frames;previousRxAt=now;
     put('status_updated','最后更新：'+new Date().toLocaleTimeString());
-  }catch(e){putStatusError();}
+  }catch(e){const el=document.getElementById('status_updated');if(el)el.textContent='状态读取失败，正在重试...';}
 }
-function putStatusError(){const el=document.getElementById('status_updated');if(el)el.textContent='状态读取失败，正在重试...';}
+document.getElementById('reset_stats_btn').addEventListener('click',async function(){
+  if(!confirm('确定重置视频接收统计计数？不会停止视频传输。'))return;
+  const btn=this,info=document.getElementById('reset_status');btn.disabled=true;info.textContent='正在重置...';
+  try{
+    const r=await fetch('/api/reset-stats',{method:'POST',cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    previousRxFrames=null;previousRxAt=0;info.textContent='接收统计已重置（视频传输未停止）';
+    await updateStatus();
+  }catch(e){info.textContent='重置失败，请重试';}
+  finally{btn.disabled=false;}
+});
 updateStatus();setInterval(updateStatus,1000);
 </script>
 )HTML";
