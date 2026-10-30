@@ -6,7 +6,7 @@ camera capture, UART commands, configuration persistence, video transport,
 or servo actuation.
 """
 
-from ..core.config.config_core import (
+from core.config.config_core import (
     CONTROL_VIDEO_ON_CODE,
     CONTROL_VIDEO_OFF_CODE,
 )
