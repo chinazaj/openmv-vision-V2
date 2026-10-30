@@ -50,13 +50,19 @@
 
 ## 当前阶段
 
-**阶段 2 前置：先完成 OpenMV Video Core 与 ESP32 SPI Video Receiver 的最小联调闭环。**
+**阶段 1 — OpenMV Vision 迁移：UART Core → Config Core → Servo/Vision Feature → Vision Product。**
 
-当前已新增 ESP32-C3 视频接收 Core 和最小 Video Terminal 集成入口，用于验证：
+当前已在 `feature/openmv-vision` 上完成第一轮结构拆分：新增 UART JSONL Core、Config Core、Vision Feature、Servo Feature 和 Vision Product 入口。它们目前均为 `MIGRATING`，尚未通过 OpenMV MicroPython 静态/导入检查及实际硬件验证。
+
+本次迁移复用现有 `openmv/core/video/video_core.py`，不复制原版单体固件中的旧 SPITransmitter，也不改变 ESP32 视频接收代码。Wi-Fi 配置不属于本次 OpenMV Config Core 迁移范围。
+
+## ESP32 视频基线状态
+
+当前 ESP32 分支已新增 SPI V2 接收 Core 和最小 Video Terminal 集成入口，用于验证：
 
 `OpenMV video_core → SPI V2 → ESP32 SpiVideoReceiver → MJPEG /stream`
 
-这一步故意不迁移 Vision API、UART 控制、Wi-Fi 配置等功能，避免在视频链路尚未硬件验证前同时改变多个变量。硬件验证完成前，ESP32 Video Receiver 和整个 Video Terminal 均不能标记为 `VERIFIED`。
+硬件验证完成前，ESP32 Video Receiver 和整个 Video Terminal 均不能标记为 `VERIFIED`。OpenMV Vision 分支完成后，再与该基线进行系统联调。
 
 ## 迁移记录
 
