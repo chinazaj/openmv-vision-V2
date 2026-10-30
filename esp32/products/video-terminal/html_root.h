@@ -19,7 +19,7 @@ static const char HTML_ROOT_DEV_BODY[] = R"HTML(<div class='card'>
 <a id='stop_btn' href='/stop' class='btn btn-red {{STOP_CLASS}}' aria-disabled='{{STOP_DISABLED}}'>停止视频</a></div>
 <a id='watch_btn' href='http://openmv-wifi.local:81/stream' target='_blank' rel='noopener noreferrer' class='btn btn-green'>观看视频</a>
 <a href='/toggle_led' class='btn btn-orange'>切换指示灯（开发）</a>
-<a href='/config' class='btn btn-purple'>设备配置</a></div>
+</div>
 <div class='card'><h2>网络设置</h2><a href='/wifi' class='btn btn-purple'>Wi-Fi 配网</a></div>
 <script>
 let currentVideoActive = {{VIDEO_ACTIVE}};
