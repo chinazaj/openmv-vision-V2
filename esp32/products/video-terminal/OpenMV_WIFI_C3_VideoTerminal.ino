@@ -335,6 +335,12 @@ void setupWebServer() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/wifi", HTTP_GET, handleWifiPage);
     server.on("/api/status", HTTP_GET, handleStatus);
+    server.on("/api/reset-stats", HTTP_POST, []() {
+        videoReceiver.resetStats();
+        server.sendHeader("Cache-Control", "no-store");
+        server.send(200, "application/json", "{\\"ok\\":true}");
+        Serial.println("[HTTP] video receive statistics reset from root page");
+    });
     server.on("/frame.jpg", HTTP_GET, handleFrame);
 
     server.on("/start", HTTP_GET, []() {
