@@ -26,7 +26,7 @@ class UARTJsonlTransport:
               (uart_bus, baudrate, rxbuf))
         print("[UART] Expected wiring: OpenMV TX -> C3 RX; OpenMV RX <- C3 TX; GND common")
 
-    def poll(self, command_handler):
+    def _log(self, message):\n        if self.debug:\n            print(message)\n\n    def poll(self, command_handler):
         """Drain available UART data and dispatch each complete JSON object.
 
         command_handler receives one decoded dict. Any exception is converted
@@ -53,7 +53,7 @@ class UARTJsonlTransport:
 
                     if value == 10:  # LF
                         if self.discarding_oversize_line:
-                            print("[UART ERROR] Oversized RX line discarded")
+                            self._log("[UART ERROR] Oversized RX line discarded")
                             self.discarding_oversize_line = False
                             self.rx_buffer = bytearray()
                             self.waiting_for_json_start = True
@@ -73,7 +73,7 @@ class UARTJsonlTransport:
                     else:
                         self.rx_buffer.append(value)
         except Exception as e:
-            print("[UART ERROR] Read/dispatch failed: %s" % e)
+            self._log("[UART ERROR] Read/dispatch failed: %s" % e)
 
     def _handle_line(self, raw_line, command_handler):
         try:
