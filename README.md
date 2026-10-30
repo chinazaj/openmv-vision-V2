@@ -25,4 +25,4 @@
 - `docs/migration-plan.md`：迁移阶段、顺序和策略
 - `docs/architecture.md`：目标系统架构
 - `docs/project-structure-and-versioning.md`：目录结构与版本策略
-- `docs/dependency-and-refactor-analysis.md`：依赖关系与重构分析
+- `docs/dependency-and-refactor-analysis.md`：依赖关系与重构分析\n- `docs/openmv-vision-migration.md`：OpenMV Vision 源码映射、协议/配置合同与待验证项
