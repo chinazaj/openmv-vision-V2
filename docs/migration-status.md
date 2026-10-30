@@ -23,12 +23,12 @@
 | 0 | 全局 | 协议基线 | `ANALYZING` | UART/SPI/HTTP/MJPEG 约束确认 | 迁移前冻结 |
 | 1 | OpenMV | 源码与依赖盘点 | `VERIFIED` | 入口、类、配置、协议、视频依赖已登记 | Video Core 抽取无结构性阻塞 |
 | 1 | OpenMV | Video Core | `MIGRATING` | V1 公共 API、SPI V2 协议行为与测试用例完成；随后执行静态测试和硬件验证 | API 已收敛；测试尚未在当前工具环境实际运行，硬件验证待执行 |
-| 1 | OpenMV | UART Core | `NOT_STARTED` | JSONL 接收、命令分发、响应行为一致 | 115200 8N1 |
-| 1 | OpenMV | Config Core | `NOT_STARTED` | config.json 权威持久化与校验行为一致 | 不改变配置语义 |
-| 1 | OpenMV | Vision Feature | `NOT_STARTED` | QR/颜色/形状检测行为与旧版一致 | 与视频核心解耦 |
-| 1 | OpenMV | Servo Feature | `NOT_STARTED` | 舵机控制行为与旧版一致 | 非阻塞控制 |
+| 1 | OpenMV | UART Core | `MIGRATING` | JSONL 接收、命令分发、响应行为一致 | 115200 8N1 |
+| 1 | OpenMV | Config Core | `MIGRATING` | config.json 权威持久化与校验行为一致 | 不改变配置语义 |
+| 1 | OpenMV | Vision Feature | `MIGRATING` | QR/颜色/形状检测行为与旧版一致 | 与视频核心解耦 |
+| 1 | OpenMV | Servo Feature | `MIGRATING` | 舵机控制行为与旧版一致 | 非阻塞控制 |
 | 1 | OpenMV | Video Product | `NOT_STARTED` | 基础视频固件可独立运行 | 不含 Vision 配置 |
-| 1 | OpenMV | Vision Product | `NOT_STARTED` | 完整视觉固件可独立运行 | 包含 Vision |
+| 1 | OpenMV | Vision Product | `MIGRATING` | 完整视觉固件可独立运行 | 包含 Vision |
 | 2 | ESP32 | 源码与依赖盘点 | `ANALYZING` | Wi-Fi/API/SPI/UART/Web 依赖登记 | 已完成旧版视频接收链路盘点，完整 Core 仍待拆分 |
 | 2 | ESP32 | SPI Video Receiver | `MIGRATING` | V2 SPI 组帧、CRC、丢帧策略保持一致 | 已建立 `esp32/core/video/spi_video_receiver.*`；等待编译与硬件验证 |
 | 2 | ESP32 | MJPEG Server | `MIGRATING` | HTTP 视频流行为一致 | 已在 Video Terminal 集成测试固件中提供 `/stream` |
@@ -67,3 +67,4 @@
 | 2026-10-22 | OpenMV Video Core | 收敛 V1 公共 API；补充 API 合同、README 与主机端硬件桩测试 | `MIGRATING` |
 | 2026-10-23 | ESP32 Video Core | 新增 SPI V2 接收、双缓冲、CRC、最新帧优先的 `SpiVideoReceiver` | `MIGRATING` |
 | 2026-10-23 | ESP32 Video Product | 新增最小 Video Terminal 联调固件，提供 MJPEG `/stream` 与 `/api/status` | `MIGRATING` |
+\n\n## OpenMV Vision 迁移记录\n\n| 日期 | 组件 | 变更 | 状态 |\n|---|---|---|---|\n| 2026-10-30 | OpenMV | 创建 `feature/openmv-vision`，基于 `feature/esp32-core-video` 当前头部 | `MIGRATING` |\n| 2026-10-30 | OpenMV UART Core | 抽取 UART3/115200/8N1/LF JSONL 接收、重同步、超长行丢弃、JSON 分发及响应发送 | `MIGRATING` |\n| 2026-10-30 | OpenMV Config Core | 抽取 config.json 默认值、schema v1→v2 兼容、校验、逐项读写和写后回读 | `MIGRATING` |\n| 2026-10-30 | OpenMV Features | 抽取 QR/颜色/形状识别与非阻塞双舵机动作 | `MIGRATING` |\n| 2026-10-30 | OpenMV Vision Product | 新增产品入口，组合 UART/Config/Servo/Vision 与现有 Video Core | `MIGRATING` |\n
