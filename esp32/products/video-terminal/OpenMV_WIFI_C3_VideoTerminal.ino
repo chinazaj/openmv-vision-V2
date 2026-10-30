@@ -285,6 +285,20 @@ void handleStatus() {
     json += ",\"rx_timeout_count\":" + String(stats.timeouts);
     json += ",\"rx_oversize_count\":" + String(stats.oversize);
     json += ",\"rx_frame_id_gap_count\":" + String(stats.frame_id_gaps);
+    json += ",\"free_heap\":" + String(ESP.getFreeHeap());
+    json += ",\"min_free_heap\":" + String(ESP.getMinFreeHeap());
+    json += ",\"uptime_s\":" + String(millis() / 1000UL);
+    json += ",\"wifi_rssi\":" + String(WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+#if VIDEO_CORE_DEVELOPMENT
+    json += ",\"last_frame_age_ms\":";
+    if (stats.last_good_frame_ms == 0) {
+        json += "null";
+    } else {
+        json += String(static_cast<uint32_t>(millis() - stats.last_good_frame_ms));
+    }
+#else
+    json += ",\"last_frame_age_ms\":null";
+#endif
     json += "}";
     server.send(200, "application/json", json);
 }
