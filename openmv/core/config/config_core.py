@@ -15,8 +15,9 @@ CONTROL_VIDEO_OFF_CODE = "MVTP_RESERVED_VIDEO_OFF"
 class ConfigManager:
     """Compatibility-preserving config.json manager migrated from V1."""
 
-    def __init__(self, filename="config.json"):
+    def __init__(self, filename="config.json", debug=False):
         self.filename = filename
+        self.debug = debug
         self.config = {
             "schema_version": 2,
             "video": {"enabled": False},
@@ -40,6 +41,10 @@ class ConfigManager:
             (30, 80, -128, -10, -128, 0)
         ]
         self.load()
+
+    def _log(self, *args):
+        if self.debug:
+            print(*args)
 
     def load(self):
         try:
