@@ -85,7 +85,7 @@ class UARTJsonlTransport:
 
                         raw_line = bytes(self.rx_buffer)
                         self._reset_rx_line()
-                        if raw_line.endswith(b"\\r"):
+                        if raw_line.endswith(b"\r"):
                             raw_line = raw_line[:-1]
                         if raw_line:
                             self._handle_line(raw_line, command_handler)
@@ -148,7 +148,7 @@ class UARTJsonlTransport:
     def send_json(self, data):
         """Serialize and transmit one JSONL response/event; return success."""
         try:
-            payload = ujson.dumps(data) + "\\n"
+            payload = ujson.dumps(data) + "\n"
             written = self.uart.write(payload)
             if isinstance(written, int) and written != len(payload):
                 self.stats["tx_errors"] += 1
