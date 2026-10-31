@@ -22,6 +22,20 @@ class UARTJsonlTransport:
         self.discarding_oversize_line = False
         self.waiting_for_json_start = True
         self.debug = debug
+
+        # Lightweight counters make failures observable without changing the
+        # application's polling cadence or wire protocol.
+        self.stats = {
+            "rx_bytes": 0,
+            "rx_lines": 0,
+            "rx_read_errors": 0,
+            "rx_parse_errors": 0,
+            "rx_handler_errors": 0,
+            "rx_oversize_lines": 0,
+            "tx_messages": 0,
+            "tx_errors": 0
+        }
+        self.last_error = None
         self._log("[UART] Initialized: UART%d, baud=%d, 8N1, rxbuf=%d" %
                   (uart_bus, baudrate, rxbuf))
         self._log("[UART] Expected wiring: OpenMV TX -> C3 RX; OpenMV RX <- C3 TX; GND common")
@@ -30,26 +44,33 @@ class UARTJsonlTransport:
         if self.debug:
             print(message)
 
-    def poll(self, command_handler):
-        """Drain available UART data and dispatch each complete JSON object.
+    def _reset_rx_line(self):
+        self.rx_buffer = bytearray()
+        self.discarding_oversize_line = False
+        self.waiting_for_json_start = True
 
-        command_handler receives one decoded dict. Any exception is converted
-        to the same generic error response/event used by the V1 firmware.
-        """
-        try:
-            while True:
+    def poll(self, command_handler):
+        """Drain currently available UART data and dispatch complete JSONL commands."""
+        while True:
+            try:
                 available = self.uart.any()
                 if not available:
                     break
                 chunk = self.uart.read(available)
                 if not chunk:
                     break
-                for value in chunk:
+            except Exception as exc:
+                self.stats["rx_read_errors"] += 1
+                self.last_error = "UART read failed: %s" % exc
+                self._log("[UART RX ERROR] %s" % self.last_error)
+                break
+
+            self.stats["rx_bytes"] += len(chunk)
+            for value in chunk:
+                try:
                     # Resynchronize at the next JSON object start after noise.
                     if self.waiting_for_json_start:
                         if value != 123:  # '{'
-                            if value == 10:
-                                continue
                             continue
                         self.waiting_for_json_start = False
                         self.rx_buffer = bytearray([value])
@@ -57,15 +78,14 @@ class UARTJsonlTransport:
 
                     if value == 10:  # LF
                         if self.discarding_oversize_line:
+                            self.stats["rx_oversize_lines"] += 1
                             self._log("[UART ERROR] Oversized RX line discarded")
-                            self.discarding_oversize_line = False
-                            self.rx_buffer = bytearray()
-                            self.waiting_for_json_start = True
+                            self._reset_rx_line()
                             continue
+
                         raw_line = bytes(self.rx_buffer)
-                        self.rx_buffer = bytearray()
-                        self.waiting_for_json_start = True
-                        if raw_line.endswith(b"\r"):
+                        self._reset_rx_line()
+                        if raw_line.endswith(b"\\r"):
                             raw_line = raw_line[:-1]
                         if raw_line:
                             self._handle_line(raw_line, command_handler)
@@ -76,8 +96,13 @@ class UARTJsonlTransport:
                         self.rx_buffer = bytearray()
                     else:
                         self.rx_buffer.append(value)
-        except Exception as e:
-            self._log("[UART ERROR] Read/dispatch failed: %s" % e)
+                except Exception as exc:
+                    # A malformed line or unexpected parser-state error must
+                    # not silently discard the rest of the current UART chunk.
+                    self.stats["rx_read_errors"] += 1
+                    self.last_error = "UART receive state error: %s" % exc
+                    self._log("[UART RX ERROR] %s" % self.last_error)
+                    self._reset_rx_line()
 
     def _handle_line(self, raw_line, command_handler):
         try:
@@ -85,16 +110,33 @@ class UARTJsonlTransport:
             command = ujson.loads(line)
             if not isinstance(command, dict):
                 raise ValueError("JSON root must be an object")
-            self._log("[UART RX LINE] bytes=%d command=%r" %
-                      (len(raw_line), command.get("cmd")))
-            command_handler(command)
-        except Exception as e:
+        except Exception as exc:
+            self.stats["rx_parse_errors"] += 1
+            self.last_error = "JSON parse failed: %s" % exc
             self._log("[UART PARSE ERROR] bytes=%d prefix=%r error=%s" %
-                      (len(raw_line), raw_line[:160], e))
+                      (len(raw_line), raw_line[:160], exc))
             self.send_json({
                 "type": "resp",
                 "status": "error",
-                "reason": "invalid_json_or_command"
+                "reason": "invalid_json"
+            })
+            return
+
+        self.stats["rx_lines"] += 1
+        self._log("[UART RX LINE] bytes=%d command=%r" %
+                  (len(raw_line), command.get("cmd")))
+        try:
+            command_handler(command)
+        except Exception as exc:
+            self.stats["rx_handler_errors"] += 1
+            self.last_error = "Command handler failed: %s" % exc
+            self._log("[UART COMMAND ERROR] cmd=%r error=%s" %
+                      (command.get("cmd"), exc))
+            self.send_json({
+                "type": "resp",
+                " status": "error",
+                "reason": "command_processing_failed",
+                "detail": str(exc)
             })
             self.send_json({
                 "type": "event",
@@ -104,10 +146,22 @@ class UARTJsonlTransport:
             })
 
     def send_json(self, data):
-        """Serialize one response/event and terminate it with LF."""
+        """Serialize and transmit one JSONL response/event; return success."""
         try:
-            payload = ujson.dumps(data) + "\n"
-            self.uart.write(payload)
+            payload = ujson.dumps(data) + "\\n"
+            written = self.uart.write(payload)
+            if isinstance(written, int) and written != len(payload):
+                self.stats["tx_errors"] += 1
+                self.last_error = "UART short write: %d/%d bytes" % (
+                    written, len(payload)
+                )
+                self._log("[UART TX ERROR] %s" % self.last_error)
+                return False
+            self.stats["tx_messages"] += 1
             self._log("[UART TX] %s" % payload.strip())
-        except Exception as e:
-            self._log("[UART TX ERROR] %s" % e)
+            return True
+        except Exception as exc:
+            self.stats["tx_errors"] += 1
+            self.last_error = "UART transmit failed: %s" % exc
+            self._log("[UART TX ERROR] %s" % self.last_error)
+            return False
