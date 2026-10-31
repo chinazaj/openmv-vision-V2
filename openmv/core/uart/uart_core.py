@@ -134,7 +134,7 @@ class UARTJsonlTransport:
                       (command.get("cmd"), exc))
             self.send_json({
                 "type": "resp",
-                " status": "error",
+                "status": "error",
                 "reason": "command_processing_failed",
                 "detail": str(exc)
             })
